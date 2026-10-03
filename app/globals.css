@@ -1,0 +1,295 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Protocol Atlas — design tokens
+ *
+ * The experience is intentionally dark-only. It is a "stage": a dark,
+ * high-contrast engineering surface. Protocol accent colours exist for
+ * *identity* — they mark which protocol you are looking at — not for
+ * decoration. Nothing else on the page is tinted.
+ * ------------------------------------------------------------------ */
+
+@theme {
+  /* Surfaces — near-black neutrals, slightly cool. */
+  --color-void: oklch(0.115 0.008 265);
+  --color-base: oklch(0.142 0.009 265);
+  --color-surface: oklch(0.178 0.010 265);
+  --color-raised: oklch(0.215 0.011 265);
+  --color-line: oklch(0.275 0.012 265);
+  --color-line-strong: oklch(0.36 0.014 265);
+
+  /* Text — deliberately high contrast. */
+  --color-ink: oklch(0.975 0.003 265);
+  --color-ink-soft: oklch(0.80 0.008 265);
+  --color-ink-mute: oklch(0.635 0.011 265);
+  --color-ink-faint: oklch(0.50 0.012 265);
+
+  /* Protocol identity accents. */
+  --color-tcp: oklch(0.70 0.155 250);
+  --color-udp: oklch(0.70 0.165 300);
+  --color-http: oklch(0.75 0.155 65);
+  --color-https: oklch(0.78 0.165 155);
+  --color-i2c: oklch(0.79 0.125 205);
+  --color-can: oklch(0.68 0.185 28);
+
+  /* Semantic signal colours, used inside diagrams. */
+  --color-ok: oklch(0.78 0.16 155);
+  --color-warn: oklch(0.80 0.15 85);
+  --color-danger: oklch(0.68 0.19 25);
+
+  --font-sans: var(--font-atlas-sans), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-atlas-mono), ui-monospace, SFMono-Regular, "SF Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+    /* The orbit and packet visuals are wider than the viewport on small
+       screens; clamp horizontal overflow at the root so nothing can push
+       the document sideways. */
+    overflow-x: hidden;
+  }
+
+  body {
+    background-color: var(--color-void);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background-color: oklch(0.70 0.155 250 / 0.35);
+    color: var(--color-ink);
+  }
+
+  /* Keyboard-only focus rings: always visible, never noisy for mouse users. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* Respect the user's motion preference at the root. Individual components
+     additionally branch on `useReducedMotion` so that state still updates —
+     it just arrives without the travel. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---- Layout scaffolding ---------------------------------------- */
+
+  /* Blueprint grid. Two layered 1px gradients plus a soft overhead glow —
+     the "engineering drawing" substrate the whole site sits on. */
+  .atlas-grid {
+    background-image:
+      radial-gradient(
+        ellipse 80% 55% at 50% -10%,
+        oklch(0.32 0.03 258 / 0.30),
+        transparent 70%
+      ),
+      linear-gradient(to right, oklch(1 0 0 / 0.022) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(1 0 0 / 0.022) 1px, transparent 1px);
+    background-size: 100% 100%, 56px 56px, 56px 56px;
+  }
+
+  /* Finer grid for inside cards and visualizers. */
+  .atlas-grid-fine {
+    background-image:
+      linear-gradient(to right, oklch(1 0 0 / 0.028) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(1 0 0 / 0.028) 1px, transparent 1px);
+    background-size: 22px 22px, 22px 22px;
+  }
+
+  /* Dot matrix, used behind the orbit. */
+  .atlas-dots {
+    background-image: radial-gradient(
+      oklch(1 0 0 / 0.075) 1px,
+      transparent 1px
+    );
+    background-size: 26px 26px, 26px 26px;
+  }
+
+  /* Fades an edge of a visualizer into the page instead of cutting it off. */
+  .atlas-vignette {
+    mask-image: radial-gradient(ellipse 78% 78% at 50% 50%, #000 45%, transparent 100%);
+  }
+
+  /* ---- Type ------------------------------------------------------ */
+
+  /* Monospace micro-label: the workhorse for every technical annotation. */
+  .atlas-label {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    line-height: 1;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-ink-mute);
+  }
+
+  .atlas-label-strong {
+    color: var(--color-ink-soft);
+  }
+
+  /* Big editorial headings get tighter tracking and optical balance. */
+  .atlas-display {
+    letter-spacing: -0.035em;
+    line-height: 0.94;
+    text-wrap: balance;
+  }
+
+  .atlas-headline {
+    letter-spacing: -0.022em;
+    line-height: 1.04;
+    text-wrap: balance;
+  }
+
+  /* ---- Surfaces -------------------------------------------------- */
+
+  /* Glass panel: translucent, hairline border, inner top highlight so the
+     edge reads as a lit physical surface rather than a flat rectangle. */
+  .atlas-panel {
+    background-color: oklch(0.178 0.010 265 / 0.62);
+    border: 1px solid oklch(1 0 0 / 0.075);
+    backdrop-filter: blur(14px) saturate(130%);
+    box-shadow:
+      inset 0 1px 0 0 oklch(1 0 0 / 0.05),
+      0 1px 2px oklch(0 0 0 / 0.4);
+  }
+
+  .atlas-panel-solid {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+  }
+
+  /* A panel that has been "selected" — used for the active protocol node. */
+  .atlas-panel-active {
+    background-color: oklch(0.215 0.011 265 / 0.85);
+    box-shadow:
+      inset 0 1px 0 0 oklch(1 0 0 / 0.07),
+      0 0 0 1px var(--accent, oklch(1 0 0 / 0.14)),
+      0 18px 44px -18px var(--accent-soft, oklch(0 0 0 / 0.7));
+  }
+
+  /* ---- Interaction ---------------------------------------------- */
+
+  /* Sheen sweep used on primary buttons. */
+  .atlas-sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .atlas-sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 30%,
+      oklch(1 0 0 / 0.28) 48%,
+      transparent 66%
+    );
+    transform: translateX(-120%);
+    transition: transform 0.75s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+  }
+  .atlas-sheen:hover::after,
+  .atlas-sheen:focus-visible::after {
+    transform: translateX(120%);
+  }
+
+  /* Animated dashed connector — the "signal travelling down the wire" motif. */
+  .atlas-wire {
+    stroke-dasharray: 5 7;
+    animation: atlas-wire 1.15s linear infinite;
+  }
+
+  /* Pulsing halo behind a node that is currently transmitting. */
+  .atlas-pulse {
+    animation: atlas-pulse 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes atlas-wire {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+@keyframes atlas-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.12;
+    transform: scale(1.09);
+  }
+}
+
+@keyframes atlas-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+
+@keyframes atlas-scan {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  35%,
+  65% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Styled scrollbars for the few places that genuinely scroll. */
+.atlas-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+.atlas-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.atlas-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.atlas-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-line-strong);
+  border-radius: 99px;
+}
