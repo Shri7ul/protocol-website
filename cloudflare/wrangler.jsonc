@@ -47,6 +47,33 @@
 
   "main": "worker.js",
 
+  // ─── The route this Worker owns ───────────────────────────────────────────
+  //
+  // `shriful.tech/protocol*` — both the bare prefix and everything under it.
+  //
+  // IMPORTANT: the pattern is on the APEX host, and it must NOT include
+  // `www.shriful.tech`.
+  //
+  // Verified 2026-10-03 against the live site: BOTH hosts resolve through
+  // Cloudflare and BOTH are proxied to Vercel, whose "redirect apex to www"
+  // setting answers with `307 -> https://www.shriful.tech/...` for every apex
+  // path. If `www.shriful.tech/protocol*` were also matched here, the Worker's
+  // 200 would have to survive a Vercel-side 307 first — i.e. the browser would
+  // leave for `www` and never come back to a host that serves the app.
+  //
+  // So the apex pattern is the one that gets the app in front of the visitor,
+  // and the `www` side needs a redirect back (or the apex→www setting turned
+  // off). See DEPLOY-WORKFLOW.md, Stage 2, for both options.
+  //
+  // Once deployed, wrangler prints the assigned route. Confirm it is exactly
+  // the apex pattern before trusting the public URL.
+  "routes": [
+    {
+      "pattern": "shriful.tech/protocol*",
+      "zone_name": "shriful.tech"
+    }
+  ],
+
   "vars": {
     // Public prefix. MUST equal NEXT_PUBLIC_BASE_PATH used to build the app.
     "PROTOCOL_PREFIX": "/protocol",

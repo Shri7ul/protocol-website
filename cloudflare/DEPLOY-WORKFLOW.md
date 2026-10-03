@@ -99,145 +99,146 @@ active** — if both are configured they will fight.
 
 | Mechanism | Where it is configured | Evidence in response headers |
 |---|---|---|
-| Cloudflare Worker | `cloudflare/wrangler.jsonc` | `cf-ray`, no `x-nf-*` |
-| Netlify proxy rule | Netlify dashboard (not in git) | `x-nf-request-id` |
+| Cloudflare Worker | `cloudflare/wrangler.jsonc` | `cf-ray`, and the Worker's own `x-protocol-atlas: proxy` |
+| Host rewrite on the other project | Vercel dashboard (not in git) | neither — the app's own headers appear at the public path |
 
-Current state of `shriful.tech` (checked 2026-10-03):
+#### Measured topology of `shriful.tech` (verified 2026-10-03)
 
-| Path | Status | Served by |
-|---|---|---|
-| `/protocol/tcp` | **200** | Netlify proxy → Vercel |
-| `/protocol/udp` … `/can` | **200** | Netlify proxy → Vercel |
-| `/protocol/_next/...` | **200** | Netlify proxy → Vercel |
-| `/protocol` | **308 infinite loop** | Netlify |
-| `/protocol/` | **308 infinite loop** | Netlify |
-
-So the pages work, but **the app root loops forever**. Everything below fixes
-that.
-
-### 2.2 The `/protocol` infinite redirect loop
-
-**Symptom**
-
-```bash
-curl -s -o /dev/null -w '%{num_redirects}\n' -L https://shriful.tech/protocol
-# 50   (curl's limit)
-```
-
-One hop, without following:
+An earlier revision of this document blamed a **Netlify** proxy rule for the
+`/protocol` behaviour. That attribution was wrong. Re-measuring every host and
+path shows **no `x-nf-request-id` anywhere**, and every response carries
+`x-vercel-id`. The live system is:
 
 ```
-HTTP/1.1 308 Permanent Redirect
-Location: https://shriful.tech/protocol
-x-nf-request-id: 01M414MWWF9454D16Q6YDC9BAY
+browser
+  |
+  v
+Cloudflare DNS/proxy          (Server: cloudflare + CF-RAY on every response)
+  |
+  v
+Vercel — "redirect apex to www" is ON
+  |
+  +-- shriful.tech/*            -> 307 -> https://www.shriful.tech/*
+  |
+  v
+www.shriful.tech -> the PORTFOLIO project        (no /protocol route at all)
 ```
 
-It redirects to *itself*.
+Raw evidence:
 
-**Cause**
+| Host + path | Status | Location | Fingerprint |
+|---|---|---|---|
+| `shriful.tech/` | **307** | `https://www.shriful.tech/` | `x-vercel-id`, `Content-Type: text/plain` |
+| `shriful.tech/protocol` | **307** | `https://www.shriful.tech/protocol` | `x-vercel-id` |
+| `shriful.tech/protocol/tcp` | **307** | `https://www.shriful.tech/protocol/tcp` | `x-vercel-id` |
+| `www.shriful.tech/` | **200** | — | portfolio `<title>Shriful Islam …` |
+| `www.shriful.tech/protocol` | **404** | — | portfolio's own 404 page |
+| `www.shriful.tech/protocol/tcp` | **404** | — | portfolio's own 404 page |
 
-The Netlify rule almost certainly reads:
+Three conclusions follow directly from this table, and they overturn the earlier
+diagnosis:
 
-```
-/protocol/*   https://website-protocol-ten.vercel.app/protocol/:splat   200
-```
+1. **The 307 is issued by Vercel, not by Cloudflare.** `Content-Type: text/plain`
+   plus `x-vercel-id` is Vercel's redirect signature; a Cloudflare redirect rule
+   would not carry `x-vercel-id`. So it is the portfolio project's
+   *redirect apex to www* setting.
+2. **The portfolio project has no `/protocol` route.** `/protocol`, `/tcp`,
+   `/projects` all 404 on `www`; only `/robots.txt` and `/sitemap.xml` exist at
+   the root. So nothing on the portfolio is currently publishing the app.
+3. **The app was never reachable at `www.shriful.tech/protocol`.** What *did*
+   work earlier — `/protocol/tcp` returning 200 — was measured on the **apex**
+   before the apex→`www` redirect was turned on. Once that redirect appeared,
+   every apex path (including `/protocol/tcp`) began 307-ing to `www`, where
+   nothing is mounted. That is why `test:public` fell from 6/8 to 1/8: the one
+   passing assertion is `resolves without looping`, because a 307 is now a
+   finite redirect instead of a self-loop.
 
-The `*` requires at least one path segment. So:
+So the correct fix is the **Cloudflare Worker on the apex**, because the apex is
+the only host in this topology where a request can be served by something we
+control **before** Vercel's apex→`www` redirect gets a chance to answer.
 
-- `/protocol/tcp` **matches** → proxied → 200 ✅
-- `/protocol` does **not** match → falls through to Netlify's own
-  trailing-slash handling → which issues a canonical redirect back to
-  `/protocol` → **loop** ❌
-
-`/protocol/` also redirects *to* `/protocol`, which confirms the two forms
-disagree about which is canonical — the classic shape of this bug.
-
-**Fix — add a rule for the bare path, above the wildcard**
-
-In the portfolio's `public/_redirects` (or the Netlify dashboard's redirects),
-put the exact path **before** the wildcard. Netlify resolves top-to-bottom on a
-**first-match-wins** basis, so a general rule listed first will swallow a
-specific one:
-
-```
-# 1. exact root — MUST come first
-/protocol    https://website-protocol-ten.vercel.app/protocol   200!
-
-# 2. everything under it
-/protocol/*  https://website-protocol-ten.vercel.app/protocol/:splat   200!
-```
-
-Two things to keep:
-
-- **Status `200`** makes it a **proxy** (address bar unchanged). A `301`/`308`
-  would change the address bar and send the visitor to the Vercel host — the
-  exact outcome the requirement forbids.
-- **The `!` (force) flag** — required here. By default an existing file or route
-  **shadows** the rule, and the portfolio is itself a Next.js app, so its own
-  routing can claim the path first. Without `!` the proxy may simply not fire.
-  In `netlify.toml` this is `force = true`.
-
-**Why this shape matters**
-
-```
-/protocol          -> origin /protocol          (rule 1, exact)
-/protocol/tcp      -> origin /protocol/tcp      (rule 2, :splat = "tcp")
-/protocol/_next/x  -> origin /protocol/_next/x  (rule 2, :splat = "_next/x")
-```
-
-Both rules forward to the **same** origin path shape, so the origin (which
-serves the app under `/protocol`) is asked correctly in every case. This is the
-keeps-prefix shape — see `cloudflare/README.md` for why that distinction is
-load-bearing.
-
-One caveat from the Netlify docs: a rule whose `from` and `to` "resolve to the
-same location" is treated as an infinitely looping rule and **ignored**. Since
-rule 1's `to` is a different *host* from `from`, it is a legitimate proxy and not
-a loop — but if you ever see the rule silently doing nothing, that is the clause
-to look up.
-
-**The same thing in `netlify.toml`** (preferred — it lives in version control,
-unlike dashboard rules):
-
-```toml
-[[redirects]]
-  from   = "/protocol"
-  to     = "https://website-protocol-ten.vercel.app/protocol"
-  status = 200
-  force  = true
-
-[[redirects]]
-  from   = "/protocol/*"
-  to     = "https://website-protocol-ten.vercel.app/protocol/:splat"
-  status = 200
-  force  = true
-```
-
-Place these **before** any catch-all such as `/*  /index.html  200`, or the
-catch-all will win and the proxy will never fire.
-
-### 2.3 Alternative: use the Cloudflare Worker instead
-
-If you would rather have the Worker handle it (or want to drop the Netlify
-rule), deploy it and remove the Netlify rules so only one proxy is live:
+### 2.2 Fix — deploy the Worker on the apex route
 
 ```bash
 cd cloudflare
 npx wrangler deploy
 ```
 
-Then attach a route for `shriful.tech/protocol*` to the Worker, and **delete**
-the Netlify `/protocol` rules — two proxies in series is a reliable way to
-produce exactly the kind of loop in 2.2.
+`wrangler.jsonc` already declares the route it needs:
 
-The Worker is already configured to match this origin:
+```jsonc
+"routes": [{ "pattern": "shriful.tech/protocol*", "zone_name": "shriful.tech" }]
+```
+
+Note the pattern is on the **apex** host, and deliberately **not** on `www`. If
+it also matched `www.shriful.tech/protocol*`, the request would still be
+answered by the portfolio project there (no `/protocol` route) and the Worker
+would never run. The apex binding is what puts the Worker in front of the
+visitor.
+
+The Worker is already configured to match the real origin:
 
 ```jsonc
 "PROTOCOL_ORIGIN": "https://website-protocol-ten.vercel.app",
 "PROTOCOL_ORIGIN_KEEPS_PREFIX": "true"    // origin serves /protocol/tcp
 ```
 
-### 2.4 Verify Stage 2
+### 2.3 Then stop the apex from leaving for `www`
+
+The Worker only helps if the browser stays on the apex. There are two ways, and
+you should pick **one**:
+
+**Option A — turn off "Redirect apex to www" (simplest, recommended).**
+
+In the Vercel portfolio project: *Settings → Domains → `shriful.tech` → remove
+the redirect to `www.shriful.tech`* (or set `www.shriful.tech` to redirect **to**
+the apex instead). With this off:
+
+```
+shriful.tech/protocol      -> Cloudflare Worker -> Vercel app   (200)
+shriful.tech/              -> portfolio                          (200)
+```
+
+Both the app and the portfolio live on the apex, split by path. This is the
+cleanest arrangement because the Worker's route pattern already expresses it.
+
+**Option B — keep apex→`www`, and add a `www` rule that sends `/protocol` back.**
+
+Only choose this if you specifically want `www` to stay canonical for the
+portfolio. It requires a redirect on the `www` side:
+
+```
+https://www.shriful.tech/protocol*  ->  https://shriful.tech/protocol*   (302)
+```
+
+That redirect must be created in **Vercel** (project → Settings → Redirects), not
+in Cloudflare, because Cloudflare never terminates the request for `www` — Vercel
+does. Order matters: it must be evaluated **before** the portfolio's own catch-all,
+or the 404 page wins.
+
+Option B adds a hop and a second place for the prefix to be got wrong. Option A
+is a single config toggle and keeps the path split explicit.
+
+### 2.4 Do NOT put a proxy on the Vercel portfolio project
+
+It is tempting to add a rewrite in the portfolio project:
+
+```json
+{ "rewrites": [{ "source": "/protocol/:path*", "destination": "https://website-protocol-ten.vercel.app/protocol/:path*" }] }
+```
+
+Do not do this. Two independent reasons:
+
+1. It would mean editing the portfolio application, which is out of scope.
+2. It cannot work while apex→`www` is on: the request that reaches the portfolio
+   is already on `www`, and a rewrite there would still be answered by the
+   portfolio's own routing first.
+
+If you ever do move the proxy to Vercel, remove the Cloudflare route in the same
+change — **two proxies in series** is how you get the self-redirect loop that an
+earlier diagram in this file described.
+
+### 2.5 Verify Stage 2
 
 ```bash
 npm run test:public          # loops? assets? prefix? Vercel leaked?
@@ -260,7 +261,12 @@ done
 
 All eight must be `200`, and `/protocol` must report `redirects=0`.
 
-### 2.5 Verify in a browser (curl is not enough)
+**Right now these will not pass.** `test:public` is at **1/8** and every page is
+a 307 to a host with no route. That is the expected result until 2.2 and 2.3 are
+both done — the fix is a deploy plus one dashboard toggle, and both have to land
+before the public URL works.
+
+### 2.6 Verify in a browser (curl is not enough)
 
 1. **Direct reload** — paste `https://shriful.tech/protocol/tcp` and press
    `Ctrl+Shift+R`. A 404 means the proxy rule or `basePath` is wrong.
@@ -288,11 +294,14 @@ All eight must be `200`, and `/protocol` must report `redirects=0`.
 
 1. **Is it the origin?** `curl` the Vercel URL directly. If that fails, Stage 2
    is irrelevant — fix Stage 1.
-2. **Is it a loop?** `-w '%{num_redirects}'` on the failing URL. A self-location
-   means two proxies are fighting, or an exact-path rule is missing.
+2. **Is it a redirect off the host you configured?** `curl -D -` the failing URL
+   and read `location:`. A 307 to `www` means apex→`www` is still on and is
+   answering before your proxy (see 2.3). A self-location means two proxies are
+   fighting.
 3. **Is it the wrong origin?** Confirm by `<title>`, not by hostname shape.
    `-ten` and non-`-ten` are different projects.
 4. **Does the origin keep the prefix?** `/protocol/tcp` → 200 and `/tcp` → 404
    means it does.
 5. **Is the prefix doubled?** `grep -c '/protocol/protocol'` on the served HTML
    must be `0`.
+

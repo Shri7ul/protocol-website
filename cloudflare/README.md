@@ -261,12 +261,52 @@ Config lives in `cloudflare/wrangler.jsonc`:
   want the workers.dev preview URL to proxy non-`/protocol` paths. There is no
   default, deliberately: a guessed portfolio origin would silently send a
   visitor somewhere you never configured.
+- `routes` — `shriful.tech/protocol*`.
 - **No `assets` block.** This Worker serves nothing itself.
+
+Run `npm run test:config` after editing this file. It parses the config and
+asserts the invariants above — including that the route is on the **apex** host
+and not `www`, for the reason in the next section.
 
 ### Point the domain at it
 
-Add a route for `shriful.tech/protocol*` to the Worker. Requests outside that
-pattern keep being served by whatever already handles the apex.
+`wrangler.jsonc` already declares the route:
+
+```jsonc
+"routes": [{ "pattern": "shriful.tech/protocol*", "zone_name": "shriful.tech" }]
+```
+
+Requests outside that pattern keep being served by whatever already handles the
+apex.
+
+#### Which host does the route belong on? (measured 2026-10-03)
+
+**The apex — and this is load-bearing.** Both `shriful.tech` and
+`www.shriful.tech` resolve through Cloudflare, and **both are proxied to
+Vercel**. The portfolio project has *redirect apex to www* enabled, so Vercel
+answers every apex request with `307 -> https://www.shriful.tech/<same path>`:
+
+| Host + path | Status | Location |
+|---|---|---|
+| `shriful.tech/protocol` | 307 | `https://www.shriful.tech/protocol` |
+| `shriful.tech/protocol/tcp` | 307 | `https://www.shriful.tech/protocol/tcp` |
+| `www.shriful.tech/protocol` | 404 | — (portfolio, no `/protocol` route) |
+
+Two consequences:
+
+1. **A route on `www.shriful.tech/protocol*` would never run.** The request is
+   answered by the portfolio project on that host, which has no `/protocol`
+   route, so the Worker would not be reached.
+2. **The apex route only helps if the browser stays on the apex.** With
+   apex→`www` on, the browser is sent to `www` before the Worker can answer.
+   Turn that redirect off (or point `www` back at the apex) — see
+   `DEPLOY-WORKFLOW.md`, Stage 2.3.
+
+The 307 is Vercel's, not Cloudflare's: it carries `x-vercel-id` and
+`Content-Type: text/plain`, which a Cloudflare redirect rule would not produce.
+An earlier revision of this file blamed a **Netlify** rule for the `/protocol`
+behaviour; re-measuring every host shows no `x-nf-request-id` anywhere, so that
+attribution was wrong and has been removed.
 
 ---
 
@@ -359,7 +399,11 @@ credentials, no Cloudflare account.
 ```bash
 npm run test:worker      # 34 behavioural assertions
 npm run test:contract    # 13 routing rows, both origin shapes
+npm run test:config      # 13 wrangler.jsonc invariants (route host, origin flags)
 npm run test:live        # 13 assertions against the REAL origin (uses network)
+
+npm test                 # all of the above, in order
+npm run test:public      # the PUBLIC URL — needs the route deployed + apex fixed
 ```
 
 `test-live-origin.mjs` is the one that validates the deployment decision rather
@@ -401,6 +445,17 @@ caused the two reported failures:
 > to the real origin — that needs the `shriful.tech/protocol*` route attached
 > and a deployed Worker. Do not call the deployment verified until you have run
 > the §4a checks and seen them pass.
+>
+> **Current public-route status: failing, as expected (2026-10-03).**
+> `npm run test:public` is at **1/8**. Every page 307-redirects from the apex to
+> `www.shriful.tech`, which has no `/protocol` route, so it 404s. The one passing
+> assertion is `resolves without looping` — a finite redirect, not a loop.
+> Two things must both happen before it can pass:
+>
+> 1. `cd cloudflare && npx wrangler deploy` (attaches the `shriful.tech/protocol*` route)
+> 2. Turn off *redirect apex to www* on the Vercel portfolio project
+>
+> Neither has been done; this document does not claim otherwise.
 
 ---
 

@@ -51,6 +51,20 @@ async function trace(url, maxHops = 6) {
   return { hops, looped: false, exhausted: true };
 }
 
+/**
+ * Summarise a redirect chain for an assertion message.
+ *
+ * A bare "status 307" hides the only thing that matters: *where* the request
+ * was sent. The common real-world failure here is a host redirect (apex ->
+ * `www`) that answers before the proxy does, which looks identical to a plain
+ * non-200 unless the chain is printed.
+ */
+function describeHops(hops) {
+  const steps = hops.filter((h) => h.status).map((h) => h.status);
+  if (steps.length <= 1) return "";
+  return ` after ${steps.length - 1} redirect(s): ${steps.join(" -> ")}`;
+}
+
 // 1 — The app root must resolve to 200 WITHOUT looping.
 //
 // `/prefix` is the classic casualty: a `/prefix/*` wildcard does not match the
@@ -69,7 +83,7 @@ async function trace(url, maxHops = 6) {
   check(
     `GET ${BASE} -> 200`,
     final?.status === 200,
-    looped ? "looped" : `status ${final?.status ?? "none"}`,
+    looped ? "looped" : `status ${final?.status ?? "none"}${describeHops(hops)}`,
   );
 
   // The body must be the app, not the portfolio and not an error page.
