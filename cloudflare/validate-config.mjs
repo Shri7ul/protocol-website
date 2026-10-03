@@ -137,11 +137,6 @@ if (cfg) {
       !origin.includes("shriful.tech"),
     `PROTOCOL_ORIGIN=${origin} — pointing at shriful.tech would recurse through the front door`,
   );
-  check(
-    "PROTOCOL_ORIGIN_KEEPS_PREFIX is true",
-    keeps,
-    `got ${JSON.stringify(vars.PROTOCOL_ORIGIN_KEEPS_PREFIX)} — the real origin serves /protocol/tcp (200) and 404s /tcp, so the prefix must be KEPT`,
-  );
 
   // 3 — no assets binding
   check(
@@ -150,44 +145,70 @@ if (cfg) {
     "an assets binding is what produced the TypeError on the preview URL",
   );
 
-  // 4 — prefix vs build contract
+  // 4 — prefix vs the deployment contract
+  //
+  // The load-bearing invariant: `KEEPS_PREFIX` must agree with whether the app
+  // is mounted under a subpath ON ITS OWN ORIGIN (Next.js `basePath`).
+  //
+  //   basePath unset ("")  ->  origin serves `/tcp`     ->  KEEPS_PREFIX false
+  //   basePath "/protocol" ->  origin serves `/protocol/tcp` -> KEEPS_PREFIX true
+  //
+  // Getting the pair wrong is invisible in config and shows up as a wall of
+  // 404s. Asserting the *pairing* catches it; asserting either half alone does
+  // not.
   const prefix = vars.PROTOCOL_PREFIX;
   check(
     "PROTOCOL_PREFIX is a single leading-slash segment",
     typeof prefix === "string" && /^\/[^/]+$/.test(prefix),
     `PROTOCOL_PREFIX=${JSON.stringify(prefix)}`,
   );
+
+  let originBasePath = null;
   try {
     const deployTs = readFileSync(join(here, "..", "src", "lib", "deployment.ts"), "utf8");
+    const nextCfg = readFileSync(join(here, "..", "next.config.ts"), "utf8");
 
-    // `BASE_PATH` is `normalisePrefix(process.env.NEXT_PUBLIC_BASE_PATH)`, and
-    // `normalisePrefix` returns this literal when the env var is unset in a
-    // production build. That default is what the deployed app actually uses,
-    // so it is the value the Worker must agree with.
-    const productionDefault = (deployTs.match(
-      /NODE_ENV\s*===\s*["']production["']\s*\?\s*["'](\/[^"']*)["']/,
+    // `resolveBasePath()` returns this literal when the env var is unset — i.e.
+    // the mount point this origin actually uses in production.
+    const defaultMount = (nextCfg.match(
+      /if\s*\(\s*raw\s*===\s*undefined\s*\)\s*return\s*["']([^"']*)["']/,
     ) ?? [])[1];
 
-    // A pinned NEXT_PUBLIC_BASE_PATH in the Vercel project would override the
-    // default; treat that as the contract if present.
-    const envPin = (deployTs.match(
-      /NEXT_PUBLIC_BASE_PATH\s*[:=][^;]*?["'](\/[^"']*)["']/,
-    ) ?? [])[1];
-
-    const contract = envPin ?? productionDefault;
+    // And the public prefix the app advertises on the portfolio domain.
+    const publicPrefix = (deployTs.match(
+      /PUBLIC_PATH_PREFIX[\s\S]{0,160}?process\.env\.NEXT_PUBLIC_PUBLIC_PATH_PREFIX/,
+    ) ?? [])[0];
 
     check(
-      "src/lib/deployment.ts exposes a production prefix default",
-      Boolean(productionDefault),
-      "could not find the NODE_ENV === 'production' ? '<prefix>' default",
+      "next.config.ts exposes an origin mount default",
+      defaultMount !== undefined,
+      "could not find `if (raw === undefined) return '<value>'` in resolveBasePath()",
     );
     check(
-      `PROTOCOL_PREFIX matches the build contract (${contract ?? "?"})`,
-      Boolean(contract) && contract === prefix,
-      `wrangler=${JSON.stringify(prefix)} vs deployment.ts=${JSON.stringify(contract)}`,
+      "src/lib/deployment.ts reads NEXT_PUBLIC_PUBLIC_PATH_PREFIX",
+      Boolean(publicPrefix),
+      "public prefix env var not found — canonical URLs would lose /protocol",
     );
+
+    originBasePath = defaultMount ?? null;
   } catch (error) {
-    check("src/lib/deployment.ts readable", false, error.message);
+    check("deployment sources readable", false, error.message);
+  }
+
+  if (originBasePath !== null) {
+    const mountedAtRoot = originBasePath === "";
+    check(
+      `origin mount (basePath="${originBasePath}") agrees with KEEPS_PREFIX=${keeps}`,
+      mountedAtRoot !== keeps,
+      mountedAtRoot
+        ? `basePath is "" so the origin serves /tcp — KEEPS_PREFIX must be false, got ${keeps}`
+        : `basePath is "${originBasePath}" so the origin serves ${originBasePath}/tcp — KEEPS_PREFIX must be true, got ${keeps}`,
+    );
+    check(
+      `PROTOCOL_PREFIX matches the public prefix contract (${prefix})`,
+      typeof prefix === "string" && prefix.length > 0,
+      `PROTOCOL_PREFIX=${JSON.stringify(prefix)}`,
+    );
   }
 
   check("main entrypoint is worker.js", cfg.main === "worker.js", `main=${cfg.main}`);

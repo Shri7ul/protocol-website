@@ -7,6 +7,48 @@ exactly what the Cloudflare Worker is expected to do.
 
 ## 1. The shape
 
+There are **two addresses** for one app, and keeping them distinct is the whole
+design:
+
+| Address | Serves | Prefix |
+|---|---|---|
+| `https://website-protocol-ten.vercel.app/` | the deployment itself | **none** |
+| `https://shriful.tech/protocol` | the public portfolio URL | `/protocol` |
+
+```
+ORIGIN  (Vercel/Netlify)                  PUBLIC  (portfolio domain)
+  /          -> app root      200           /protocol      -> app root     200
+  /tcp       -> TCP page      200           /protocol/tcp  -> TCP page     200
+  /_next/... -> assets        200           /protocol/_next/... -> assets  200
+  /protocol  -> 404 (not here)              /              -> the portfolio
+```
+
+**The app is built at its own ROOT — `basePath` is unset.** So opening the
+deployment URL directly just works: `/` is the app, no proxy, no prefix. The
+`/protocol` segment exists **only** on the portfolio domain, where the Cloudflare
+Worker adds it and strips it again on the way in.
+
+### Why the two are separate
+
+An earlier revision set `basePath: "/protocol"`, which mounted the app under the
+prefix **on its own origin too**. The deployment then 404'd at `/` — that is the
+"deployed but the link shows nothing" symptom — and the prefix had to be kept,
+so the origin could never be opened directly.
+
+Now:
+
+```
+basePath            = ""            where the app mounts on ITS OWN origin
+PUBLIC_PATH_PREFIX  = "/protocol"   where it appears on the PORTFOLIO
+```
+
+`PUBLIC_PATH_PREFIX` is **metadata only** (canonical and Open Graph URLs). It
+never reaches asset paths or in-app `href`s — those are origin-root relative, so
+the same build works on any host. `app/layout.tsx` uses it for `canonical`, and
+`app/[id]/page.tsx` extends it per page.
+
+### Does the Worker strip the prefix? It depends on the origin
+
 ```
 Browser                     Cloudflare Worker              Vercel
 shriful.tech/protocol   ->  forward unchanged         ->   website-protocol-ten.vercel.app/protocol
@@ -28,70 +70,85 @@ hostname.
 
 ### Does the Worker strip the prefix? It depends on the origin
 
-Two deployments both built with `basePath: "/protocol"` can present differently:
-
 | Origin serves | `PROTOCOL_ORIGIN_KEEPS_PREFIX` | Worker maps `/protocol/tcp` to |
 |---|---|---|
-| `/tcp` (deployed at its own root) | `"false"` (default) | `/tcp` — strips |
-| `/protocol/tcp` (deployed at its apex) | `"true"` | `/protocol/tcp` — unchanged |
+| `/tcp` (app built without `basePath`) | `"false"` — **production** | `/tcp` — strips |
+| `/protocol/tcp` (app built with `basePath`) | `"true"` | `/protocol/tcp` — unchanged |
 
-`website-protocol-ten.vercel.app` is the **second** kind: `/protocol/tcp` → 200,
-`/tcp` → 404. So production sets the flag to `"true"`.
+`website-protocol-ten.vercel.app` is the **first** kind now: the app is built
+without `basePath`, so `/` and `/tcp` are 200 and `/protocol` is 404. Production
+therefore sets the flag to `"false"`.
 
 Both settings produce valid-looking URLs; only one matches the origin. Getting it
 wrong yields a wall of 404s with no other symptom, so **ask the origin** rather
-than guessing:
+than guessing — and ask for both shapes, because a 200 on one tells you which
+flag is right:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://<origin>/protocol
-curl -s -o /dev/null -w '%{http_code}\n' https://<origin>/tcp
+curl -s -o /dev/null -w '/ %{http_code}\n'          https://<origin>/
+curl -s -o /dev/null -w '/tcp %{http_code}\n'       https://<origin>/tcp
+curl -s -o /dev/null -w '/protocol %{http_code}\n'  https://<origin>/protocol
 ```
 
-`/protocol` → 200 and `/tcp` → 404 means `KEEPS_PREFIX=true`.
+`/` → 200 and `/protocol` → 404 means `KEEPS_PREFIX=false` (strip). The inverse
+means `true`.
+
+> **The flag must agree with the build.** `cloudflare/validate-config.mjs`
+> (`npm run test:config`) reads `basePath` from `next.config.ts` and asserts the
+> pairing, so the two cannot drift apart unnoticed.
 
 ### Choosing the origin
 
 ```bash
-# 200 -> Protocol Atlas. 404 -> not our app.
+# 200 at "/" -> Protocol Atlas (root mount). 404 -> not our app or still prefixed.
 for h in website-protocol.vercel.app website-protocol-ten.vercel.app; do
   printf '%-42s %s  %s\n' "$h" \
-    "$(curl -s -o /dev/null -w '%{http_code}' https://$h/protocol)" \
-    "$(curl -s https://$h/protocol | grep -o '<title>[^<]*' | head -1)"
+    "$(curl -s -o /dev/null -w '%{http_code}' https://$h/)" \
+    "$(curl -s https://$h/ | grep -o '<title>[^<]*' | head -1)"
 done
 ```
 
 `npm run test:live` automates exactly this against the configured origin.
 
-### Why `basePath` rather than Worker-only stripping
+### Why no `basePath`, and what does the prefixing now
 
-Next.js emits asset URLs root-absolute: `/_next/static/...`. With no `basePath`,
-the browser resolves those against the apex domain — `shriful.tech/_next/...` —
-which belongs to the portfolio. Every JS and CSS request would 404 or, worse,
-silently load the portfolio's own chunks.
+Next emits asset URLs root-absolute (`/_next/static/...`), and with `basePath`
+unset that is exactly what we want: the origin serves those paths itself, so the
+browser resolves them against the origin. Nothing breaks and the deployment works
+standalone.
 
-`basePath: "/protocol"` makes Next prefix *everything it generates* — asset
-URLs, `<Link>` hrefs, router transitions, the RSC payload. The HTML is then
-already correct for the browser and the Worker's only job is a single prefix
-strip. No HTML or payload rewriting, which would be fragile against streaming
-and edge caching.
+The prefix problem is solved **by the proxy instead**: every request under
+`/protocol` is forwarded with that one segment removed. Because the app is
+mounted at the root, the strip is a total, single-rule mapping — pages, RSC
+payloads, and assets all transform identically. There is no per-asset
+special-casing and no HTML or payload rewriting (which would be fragile against
+streaming and edge caching).
+
+The trade-off: the Worker is now **required** for the public URL, whereas before
+the origin already carried the prefix. That is the correct trade — it is what
+makes the deployment directly openable, which is the point.
 
 ### The route/shape invariant
 
 ```
-public URL   = BASE_PATH + app-relative route
-origin path  = app-relative route          (after the Worker strips)
+origin path  = app-relative route            <- the app is mounted at the ROOT
+public URL   = PUBLIC_PATH_PREFIX + origin path
 ```
 
-That is why the dynamic segment lives at `app/[id]/` and **not**
-`app/protocol/[id]/`. If the folder were named `protocol/`, the route would be
-`/protocol/tcp` *and* the basePath would add another `/protocol`, producing
-`/protocol/protocol/tcp`.
+Because `basePath` is empty, the app-relative route **is** the origin path. The
+dynamic segment lives at `app/[id]/`, giving `/tcp` — which the origin serves
+directly and the Worker maps `/protocol/tcp` onto.
 
 | Public URL | App route | Origin path |
 |---|---|---|
 | `shriful.tech/protocol` | `/` | `/` |
 | `shriful.tech/protocol/tcp` | `/tcp` | `/tcp` |
 | `shriful.tech/protocol/_next/static/x.js` | `/_next/static/x.js` | `/_next/static/x.js` |
+| `website-protocol-ten.vercel.app/` | `/` | (direct, no proxy) |
+
+Naming the folder `protocol/` would not double anything now that `basePath` is
+empty, but it would collide again the moment `basePath` is reintroduced, so
+`app/[id]/` stays.
 
 ---
 
@@ -102,19 +159,20 @@ against `.next/server/app/*.html` and `*.rsc`.
 
 ### Paths the Worker forwards
 
-Production uses `PROTOCOL_ORIGIN_KEEPS_PREFIX=true`, so the prefix is forwarded
-unchanged. The stripping variant is shown alongside for completeness.
+Production uses `PROTOCOL_ORIGIN_KEEPS_PREFIX=false` (the app is root-mounted),
+so the prefix is **stripped**. The keeps-prefix variant is shown alongside for
+completeness.
 
-| Incoming request | Origin path (keeps prefix) | Origin path (strips) | Notes |
+| Incoming request | Origin path (strips) | Origin path (keeps prefix) | Notes |
 |---|---|---|---|
-| `GET /protocol` | `/protocol` | `/` | app root |
-| `GET /protocol/` | `/protocol` | `/` | trailing slash collapses |
-| `GET /protocol/tcp` | `/protocol/tcp` | `/tcp` | protocol page |
-| `GET /protocol/udp` … `/can` | `/protocol/udp` … | `/udp` … | all six, SSG |
-| `GET /protocol/_next/static/...` | `/protocol/_next/static/...` | `/_next/static/...` | content-hashed chunks |
-| `GET /protocol/_next/static/css/...` | `/protocol/_next/static/css/...` | `/_next/static/css/...` | stylesheet |
-| `GET /protocol/favicon.ico` | `/protocol/favicon.ico` | `/favicon.ico` | static metadata |
-| `GET /protocol/tcp?_rsc=abc` | `/protocol/tcp?_rsc=abc` | `/tcp?_rsc=abc` | **client router fetch** |
+| `GET /protocol` | `/` | `/protocol` | app root |
+| `GET /protocol/` | `/` | `/protocol` | trailing slash collapses |
+| `GET /protocol/tcp` | `/tcp` | `/protocol/tcp` | protocol page |
+| `GET /protocol/udp` … `/can` | `/udp` … | `/protocol/udp` … | all six, SSG |
+| `GET /protocol/_next/static/...` | `/_next/static/...` | `/protocol/_next/static/...` | content-hashed chunks |
+| `GET /protocol/_next/static/css/...` | `/_next/static/css/...` | `/protocol/_next/static/css/...` | stylesheet |
+| `GET /protocol/favicon.ico` | `/favicon.ico` | `/protocol/favicon.ico` | static metadata |
+| `GET /protocol/tcp?_rsc=abc` | `/tcp?_rsc=abc` | `/protocol/tcp?_rsc=abc` | **client router fetch** |
 
 The rule is total — everything under `/protocol` is forwarded, with or without
 the prefix depending on the origin's shape. There is no per-asset
@@ -133,44 +191,53 @@ Worker still handles them safely if invoked directly — see
 *Requests outside `/protocol`* below. It must never claim bare `/_next/*`, or it
 would collide with the portfolio's own bundles.
 
-### The browser only ever requests prefixed URLs
+### The browser requests ROOT-relative URLs
 
-Verified from the emitted HTML:
+Verified from the emitted HTML (`basePath` is unset):
 
 ```
-href="/protocol"                      href="/protocol/tcp"
-href="/protocol#compare"              href="/protocol/udp"
-href="/protocol#foundations"          href="/protocol/http"
-src="/protocol/_next/static/chunks/…" href="/protocol/i2c"
-href="/protocol/_next/static/css/…"   href="/protocol/can"
+href="/tcp"                      href="/udp"
+href="/#compare"                 href="/http"
+href="/#foundations"             href="/i2c"
+src="/_next/static/chunks/…"     href="/_next/static/css/…"
+href="/can"
 ```
 
-Count of root-absolute `/_next/` references (i.e. leaks to the portfolio
-namespace): **0**.
+Count of `/protocol/`-prefixed references: **0**. That is correct and deliberate
+— the app does not know it is published under a prefix. On the portfolio domain
+the browser still ends up requesting `/protocol/...`, because **the visitor
+arrived at `/protocol/tcp` and root-relative links resolve against the
+`/protocol` base of the current path.** That is precisely why a single strip rule
+is sufficient: the proxy adds the prefix on the way out and removes it on the way
+in.
 
-### The client router uses app-relative paths
+### The client router uses root-relative paths
 
 From `tcp.rsc`, the payload the client router consumes:
 
 ```json
-"p": "/protocol"          // the router's basePath
-"c": ["", "tcp"]          // route segments — APP-RELATIVE
-"b": "kcqALDSdI69LYlLUsHmPB"
-asset refs: "static/chunks/app/[id]/page-….js"   // no leading slash
+"c": ["", "tcp"]          // route segments — app-relative
+asset refs: "/_next/static/css/….css"   // root-absolute
 ```
 
-Two things follow, and both matter:
+There is **no `"p"` (basePath) field**, because `basePath` is unset. Two things
+follow:
 
-1. `"c"` is `["", "tcp"]`, **not** `["", "protocol", "tcp"]`. The router is
-   app-relative internally and applies `"p"` itself, so client-side navigation
-   produces `/protocol/tcp` in the bar — never a bare `/tcp`.
-2. Asset refs have **no leading slash**. The client joins them onto `"p"`, so
-   the resulting request is `/protocol/_next/...` — which is exactly the prefix
-   the Worker strips. The origin is asked for `/_next/...`.
+1. `"c"` is `["", "tcp"]` — the app-relative route, which is also the origin
+   path. On the portfolio the browser requests `/protocol/tcp` and the Worker
+   strips to `/tcp`.
+2. Asset refs are root-absolute, so they resolve against the current mount point
+   in the browser and the Worker strips them the same way. One rule, applied
+   uniformly.
 
-The origin path is never prefixed. If the Worker sees a path that *still*
-contains `/protocol` after stripping, the app was built without `basePath`; the
-Worker returns a 500 with a diagnostic rather than silently 404ing.
+`cloudflare/check-root-nav.mjs` (`npm run test:root`) asserts exactly this
+against a running server: documents, assets, the RSC payload, and that the prefix
+does **not** exist on the origin.
+
+The origin path is never prefixed. If the Worker sees a path that *still* contains
+`/protocol` after stripping, the app was built *with* `basePath` while the Worker
+is stripping; the Worker returns a 500 with a diagnostic rather than silently
+404ing.
 
 ### Requests outside `/protocol` — who serves them?
 
@@ -251,12 +318,13 @@ npx wrangler deploy
 
 Config lives in `cloudflare/wrangler.jsonc`:
 
-- `PROTOCOL_PREFIX` — must equal the build's `NEXT_PUBLIC_BASE_PATH`.
+- `PROTOCOL_PREFIX` — the public prefix. Must equal the deployment's
+  `NEXT_PUBLIC_PUBLIC_PATH_PREFIX`.
 - `PROTOCOL_ORIGIN` — the deployment serving the app. Production:
   `https://website-protocol-ten.vercel.app` (note `-ten`).
-- `PROTOCOL_ORIGIN_KEEPS_PREFIX` — `"true"` for this origin, because it serves
-  the app under `/protocol` already. See *Choosing the origin* above for the
-  two-`curl` method that decides it.
+- `PROTOCOL_ORIGIN_KEEPS_PREFIX` — `"false"` for this origin, because the app is
+  built without `basePath` and therefore serves at its own root. See *Choosing
+  the origin* above for the `curl` method that decides it.
 - `PORTFOLIO_ORIGIN` — **leave unset in production.** It is only needed if you
   want the workers.dev preview URL to proxy non-`/protocol` paths. There is no
   default, deliberately: a guessed portfolio origin would silently send a
@@ -266,7 +334,8 @@ Config lives in `cloudflare/wrangler.jsonc`:
 
 Run `npm run test:config` after editing this file. It parses the config and
 asserts the invariants above — including that the route is on the **apex** host
-and not `www`, for the reason in the next section.
+and not `www`, and that `KEEPS_PREFIX` agrees with `basePath` in
+`next.config.ts`.
 
 ### Point the domain at it
 

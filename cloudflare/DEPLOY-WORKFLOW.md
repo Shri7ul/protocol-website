@@ -5,27 +5,34 @@ because Stage 2 is a proxy: if the origin is broken, the proxy faithfully
 proxies a broken site.
 
 ```
-STAGE 1  Next.js  ->  Vercel                    (the app, on its own)
+STAGE 1  Next.js  ->  Vercel/Netlify            (the app, at its OWN ROOT)
 STAGE 2  shriful.tech/protocol  ->  proxy  ->  Vercel   (the public address)
 ```
+
+**The app is built at its own root.** Stage 1 is directly openable at `/` — no
+prefix, no proxy. The `/protocol` segment is added only in Stage 2. Keeping those
+separate is what makes the deployment verifiable on its own.
 
 ---
 
 ## Stage 1 — Deploy the app to Vercel
 
-### 1.1 Build locally and confirm the prefix
+### 1.1 Build locally and confirm the shape
 
 ```bash
 cd /d/website/protocol-website
-npm run build          # production: bakes in basePath "/protocol"
+npm run build
 ```
 
-The build must emit `/protocol`-prefixed URLs. Verify before deploying:
+The build must emit **root-relative** asset URLs. Verify before deploying:
 
 ```bash
-grep -oE '(src|href)="/protocol/_next/[^"]*"' .next/server/app/index.html | head -3
-grep -c 'href="/_next/' .next/server/app/index.html     # must be 0
+grep -oE '(src|href)="/_next/[^"]*"' .next/server/app/index.html | head -3
+grep -c 'href="/protocol/' .next/server/app/index.html    # must be 0
 ```
+
+If the first exits non-zero or the second is non-zero, the build has `basePath`
+set — unset `NEXT_PUBLIC_BASE_PATH` in the Vercel project and rebuild.
 
 ### 1.2 Push to the branch Vercel tracks
 
@@ -41,7 +48,7 @@ serves "RADAR - AI Governance Evidence"). Always verify by title, never by
 name:
 
 ```bash
-curl -s https://website-protocol-ten.vercel.app/protocol | grep -o '<title>[^<]*'
+curl -s https://website-protocol-ten.vercel.app/ | grep -o '<title>[^<]*'
 # expect: <title>Protocol Atlas — How data actually moves
 ```
 
@@ -49,41 +56,36 @@ curl -s https://website-protocol-ten.vercel.app/protocol | grep -o '<title>[^<]*
 
 ```bash
 for p in "" /tcp /udp /http /https /i2c /can; do
-  printf '  /protocol%-6s %s\n' "$p" \
+  printf '  %-6s %s\n' "${p:-/}" \
     "$(curl -s -o /dev/null -w '%{http_code}' \
-       "https://website-protocol-ten.vercel.app/protocol$p")"
+       "https://website-protocol-ten.vercel.app$p")"
 done
 ```
 
-All seven must be **200**.
+All seven must be **200** — including the root. `npm run test:live` automates
+this and also asserts the prefix is *absent* here.
 
-### 1.4 Expect `/` to 404 — this is correct
+### 1.4 `/` must now work — and `/protocol` must NOT
 
-`https://website-protocol-ten.vercel.app/` returns 404 **by design**. The app
-carries `basePath: "/protocol"`, so nothing is mounted at the apex.
+`https://website-protocol-ten.vercel.app/` returns **200**. That is the point of
+building without `basePath`.
 
-> The Vercel dashboard's preview panel loads the **apex**, so it always renders
-> "The page could not be found" even when the deployment is perfectly healthy.
-> Do not treat that panel as evidence of a failed deploy. Use the `/protocol`
-> URL, or `npm run test:live`.
+`https://website-protocol-ten.vercel.app/protocol` returns **404**. That is also
+correct: the prefix belongs to the proxy, not to the deployment. If it returns
+200 here, the build still has `basePath` set — see 1.1.
 
-Optional, if you want the apex to work too — add `vercel.json` at the repo root:
-
-```json
-{ "redirects": [{ "source": "/", "destination": "/protocol", "permanent": false }] }
-```
-
-This is not required for the `shriful.tech/protocol` route and is not part of
-the current setup.
+> The Vercel dashboard's preview panel loads the deployment root, so it now
+> renders the app correctly rather than "The page could not be found".
 
 ### Stage 1 checklist
 
 | # | Check | Command | Expect |
 |---|---|---|---|
-| 1 | Build has the prefix | `grep -oE '/protocol/_next/' .next/server/app/index.html \| head -1` | a match |
-| 2 | No bare asset leaks | `grep -c 'href="/_next/' .next/server/app/index.html` | `0` |
-| 3 | Origin serves the app | `npm run test:live` | 13/13 |
+| 1 | Root-relative assets | `grep -oE '/_next/' .next/server/app/index.html \| head -1` | a match |
+| 2 | No prefixed hrefs | `grep -c 'href="/protocol/' .next/server/app/index.html` | `0` |
+| 3 | **Root serves the app** | `curl -o /dev/null -w '%{http_code}' <origin>/` | `200` |
 | 4 | All pages up | curl loop in 1.3 | seven × `200` |
+| 5 | Prefix absent | `npm run test:live` | 13/13 |
 
 ---
 
@@ -176,11 +178,11 @@ answered by the portfolio project there (no `/protocol` route) and the Worker
 would never run. The apex binding is what puts the Worker in front of the
 visitor.
 
-The Worker is already configured to match the real origin:
+The Worker is already configured to match the origin:
 
 ```jsonc
 "PROTOCOL_ORIGIN": "https://website-protocol-ten.vercel.app",
-"PROTOCOL_ORIGIN_KEEPS_PREFIX": "true"    // origin serves /protocol/tcp
+"PROTOCOL_ORIGIN_KEEPS_PREFIX": "false"    // origin serves /tcp at its root
 ```
 
 ### 2.3 Then stop the apex from leaving for `www`

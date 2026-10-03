@@ -75,28 +75,35 @@
   ],
 
   "vars": {
-    // Public prefix. MUST equal NEXT_PUBLIC_BASE_PATH used to build the app.
+    // Public prefix. MUST equal the deployment's NEXT_PUBLIC_PUBLIC_PATH_PREFIX.
     "PROTOCOL_PREFIX": "/protocol",
 
     // The deployment that actually serves Protocol Atlas.
     //
     // Verified 2026-10-03: `website-protocol.vercel.app` (without `-ten`) serves
     // a DIFFERENT project — "RADAR - AI Governance Evidence | AKIOUD AI" — and
-    // 404s on `/protocol/_next/...`. Pointing at it produces 404s everywhere.
+    // 404s on `/_next/...`. Pointing at it produces 404s everywhere.
     //
-    // `-ten` is the SvelteKit/Vercel name-suffix form of the same project name,
-    // which is why the two are easy to confuse.
+    // `-ten` is Vercel's name-suffix form of the same project name, which is why
+    // the two are easy to confuse. Verify by `<title>`, never by name shape.
     "PROTOCOL_ORIGIN": "https://website-protocol-ten.vercel.app",
 
-    // This origin already serves the app UNDER `/protocol`.
+    // FALSE — the origin serves the app at its OWN ROOT.
     //
-    // Verified: `/protocol/tcp` -> 200, `/tcp` -> 404. So the Worker must NOT
-    // strip the prefix; it forwards the path unchanged.
+    // The app is built with `basePath` unset, so the deployment serves:
     //
-    // Removing this line (or setting it false) makes the Worker send `/tcp`,
-    // which this origin 404s. Both settings look correct in isolation; only one
-    // matches the origin.
-    "PROTOCOL_ORIGIN_KEEPS_PREFIX": "true"
+    //   /              -> 200   (app root)
+    //   /tcp           -> 200
+    //   /_next/...     -> 200
+    //   /protocol      -> 404   (no such route on this origin)
+    //
+    // So the Worker must STRIP: /protocol/tcp -> /tcp. That is what lets the
+    // origin be opened directly at `/` as well as through the proxy.
+    //
+    // Both this and `PROTOCOL_ORIGIN_KEEPS_PREFIX: "true"` produce valid-looking
+    // URLs; only one matches the origin. Verify with one `curl` to the origin
+    // root before changing it — `npm run test:live` does exactly that.
+    "PROTOCOL_ORIGIN_KEEPS_PREFIX": "false"
 
     // PORTFOLIO_ORIGIN is intentionally NOT set.
     //

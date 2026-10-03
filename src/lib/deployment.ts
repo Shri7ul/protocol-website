@@ -5,32 +5,80 @@
  * from it — the Next.js `basePath`, the canonical metadata URLs, and the
  * pathname normalisation in the header.
  *
- * ─── The shape ──────────────────────────────────────────────────────────────
+ * ─── The shape (two hosts, on purpose) ──────────────────────────────────────
  *
- *   Public origin   https://shriful.tech
- *   Public prefix   /protocol
- *   ────────────────────────────────────────────────
- *   /                          -> https://shriful.tech/protocol
- *   /tcp                       -> https://shriful.tech/protocol/tcp
+ *   Origin (Vercel/Netlify)      https://website-protocol-ten.vercel.app
+ *     /                          -> the app root      200  <-- works directly
+ *     /tcp                       -> the TCP page      200  <-- works directly
  *
- * The Vercel deployment is an implementation detail and is never linked to.
+ *   Public (portfolio domain)    https://shriful.tech/protocol
+ *     /protocol                  -> the app root      200
+ *     /protocol/tcp              -> the TCP page      200
+ *
+ * **The app is built at its own ROOT (`basePath` unset).** So a bare Vercel or
+ * Netlify deploy serves the whole app at `/` with no prefix and no proxy — open
+ * the deployment URL and it just works. The `/protocol` segment exists ONLY on
+ * the portfolio domain, where the Cloudflare Worker adds it.
+ *
+ * ─── Why basePath is empty, and what the prefix is for ──────────────────────
+ *
+ * These are two separate concerns and conflating them was the earlier mistake:
+ *
+ *   basePath          Where the app is mounted on ITS OWN origin. Always "".
+ *   PUBLIC_PATH_PREFIX  Where the app appears on the PORTFOLIO. "/protocol".
+ *
+ * `basePath: "/protocol"` made the origin 404 at `/` — nothing is mounted at the
+ * apex of a subpath-mounted app — which is exactly the "deployed but shows
+ * nothing" symptom. It also forced the Worker into prefix-preserving mode, so
+ * the origin could never be opened directly.
+ *
+ * With `basePath: ""` the Worker does the prefixing instead: it strips
+ * `/protocol` and forwards to the origin root. That works because the origin
+ * serves the app at `/`, so a single prefix strip is a total mapping.
  *
  * ─── Environment variables ──────────────────────────────────────────────────
  *
- *   NEXT_PUBLIC_BASE_PATH   Public path prefix. "" or "/protocol".
- *                           Defaults to "/protocol" in production, "" in dev.
+ *   NEXT_PUBLIC_BASE_PATH        Mount point ON THIS ORIGIN. Leave unset ("").
+ *                                Only set it if you deliberately want to mount
+ *                                the app under a subpath on its own host.
  *
- *   NEXT_PUBLIC_SITE_ORIGIN Public origin, no trailing slash.
- *                           Defaults to "https://shriful.tech".
+ *   NEXT_PUBLIC_PUBLIC_PATH_PREFIX
+ *                                The prefix on the PUBLIC portfolio domain.
+ *                                Defaults to "/protocol". Metadata only — it
+ *                                affects canonical/OG URLs, never asset paths,
+ *                                so the build stays portable.
+ *
+ *   NEXT_PUBLIC_SITE_ORIGIN      Public origin, no trailing slash.
+ *                                Defaults to "https://shriful.tech".
  *
  * These are read while the module is evaluated, so on the client they are
- * inlined at build time. That is required: `basePath` is baked in at build
- * time too, and the two must agree.
+ * inlined at build time.
  */
 
-/** Prefix this app is mounted at on the public origin. */
+/**
+ * Prefix for generated asset URLs and in-app links.
+ *
+ * Empty on purpose: the app owns its origin's root. See the file header.
+ * Override only if this origin really does mount the app under a subpath.
+ */
 export const BASE_PATH: string = normalisePrefix(
   process.env.NEXT_PUBLIC_BASE_PATH,
+);
+
+/**
+ * Where the app appears on the PUBLIC (portfolio) domain.
+ *
+ * This is metadata, not routing: it is used for canonical URLs and Open Graph,
+ * and it must NOT reach asset paths or in-app `href`s — those are origin-root
+ * relative so the same build works on any host.
+ *
+ * Defaults to "/protocol" (the portfolio mount). Unset it only if the app is
+ * published at the portfolio's root, which it is not.
+ */
+const DEFAULT_PUBLIC_PATH_PREFIX = "/protocol";
+
+export const PUBLIC_PATH_PREFIX: string = normalisePrefix(
+  process.env.NEXT_PUBLIC_PUBLIC_PATH_PREFIX ?? DEFAULT_PUBLIC_PATH_PREFIX,
 );
 
 /** Public origin, without a trailing slash. */
@@ -39,13 +87,10 @@ export const SITE_ORIGIN: string = (
 ).replace(/\/+$/, "");
 
 /** Absolute public URL of the app root, e.g. "https://shriful.tech/protocol". */
-export const SITE_URL: string = `${SITE_ORIGIN}${BASE_PATH}`;
+export const SITE_URL: string = `${SITE_ORIGIN}${PUBLIC_PATH_PREFIX}`;
 
 function normalisePrefix(raw: string | undefined): string {
-  // Unset: production is published under the prefix, local dev is not.
-  if (raw === undefined) {
-    return process.env.NODE_ENV === "production" ? "/protocol" : "";
-  }
+  if (raw === undefined) return "";
 
   const trimmed = raw.trim();
   if (trimmed === "" || trimmed === "/") return "";
@@ -57,14 +102,15 @@ function normalisePrefix(raw: string | undefined): string {
 /**
  * Remove the deployment prefix from a pathname.
  *
- * `usePathname()` returns the location **including** `basePath`, so a route
- * that is `/tcp` in the app arrives as `/protocol/tcp`. Any comparison against
- * an app-relative route has to normalise first or the header's active state
- * silently stops matching.
+ * With `basePath: ""` this is normally the identity function — `usePathname()`
+ * returns app-relative paths already. It remains because it is the single place
+ * that knows how to normalise, so if the app is ever mounted under a subpath on
+ * its own origin (by setting `NEXT_PUBLIC_BASE_PATH`), every caller keeps
+ * working without a change.
  *
- *   stripBasePath("/protocol/tcp") -> "/tcp"
- *   stripBasePath("/protocol")     -> "/"
- *   stripBasePath("/tcp")          -> "/tcp"   (dev, no prefix)
+ *   BASE_PATH = ""           stripBasePath("/tcp")          -> "/tcp"
+ *   BASE_PATH = "/protocol"  stripBasePath("/protocol/tcp") -> "/tcp"
+ *   BASE_PATH = "/protocol"  stripBasePath("/protocol")     -> "/"
  */
 export function stripBasePath(pathname: string | null): string {
   if (!pathname) return "/";

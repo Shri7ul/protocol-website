@@ -538,6 +538,38 @@ check(
   `strip=${strippedPath} keep=${keptPath}`,
 );
 
+// 25 — the production shape: the app is built WITHOUT `basePath`, so the origin
+//      serves it at its own root and the Worker strips.
+//
+//      This is the mapping that lets the deployment be opened directly at `/`
+//      as well as through the `/protocol` proxy. If this ever starts mapping to
+//      `/protocol/...`, the origin would 404 and the public URL would break.
+for (const [publicPath, expected] of [
+  ["/protocol", "/"],
+  ["/protocol/", "/"],
+  ["/protocol/tcp", "/tcp"],
+  ["/protocol/can", "/can"],
+  ["/protocol/_next/static/chunks/a.js", "/_next/static/chunks/a.js"],
+  ["/protocol/favicon.ico", "/favicon.ico"],
+]) {
+  res = await call(publicPath);
+  await res.text();
+  check(
+    `root-mounted origin: ${publicPath} -> ${expected}`,
+    last().url === expected,
+    `got ${last().url}`,
+  );
+}
+
+// 26 — query strings must survive the strip (the RSC payload depends on it).
+res = await call("/protocol/tcp?_rsc=abc123");
+await res.text();
+check(
+  "root-mounted origin: query string preserved",
+  last().url === "/tcp?_rsc=abc123",
+  `got ${last().url}`,
+);
+
 console.log("\n=== Cloudflare Worker behaviour ===\n");
 let passed = 0;
 let failed = 0;

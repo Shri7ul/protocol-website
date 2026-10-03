@@ -5,60 +5,57 @@ import type { NextConfig } from "next";
  *
  * ─── Deployment shape ───────────────────────────────────────────────────────
  *
- * This app does not own a domain. It is published under a path prefix on the
- * owner's portfolio:
+ * The app is built at its OWN ROOT. A bare Vercel/Netlify deploy serves the
+ * whole app at `/` with no prefix and no proxy:
  *
- *   https://shriful.tech/protocol            -> this app's "/"
- *   https://shriful.tech/protocol/tcp        -> this app's "/tcp"
- *   https://shriful.tech/protocol/_next/...  -> this app's "/_next/..."
+ *   https://website-protocol-ten.vercel.app/       -> app root   200
+ *   https://website-protocol-ten.vercel.app/tcp    -> TCP page   200
  *
- * A Cloudflare Worker terminates the public URL, strips the `/protocol`
- * prefix, and proxies to the Vercel origin. See `cloudflare/worker.js`.
+ * The `/protocol` prefix exists ONLY on the portfolio domain, where the
+ * Cloudflare Worker adds it:
  *
- * ─── Why `basePath` and not Worker-only stripping ───────────────────────────
+ *   https://shriful.tech/protocol      -> Worker strips -> origin /
+ *   https://shriful.tech/protocol/tcp  -> Worker strips -> origin /tcp
  *
- * Next emits asset URLs root-absolute (`/_next/static/...`). With no
- * `basePath`, the browser resolves those against the *apex* domain —
- * `https://shriful.tech/_next/static/...` — which belongs to the portfolio,
- * not to this app. Every JS and CSS request would break.
+ * ─── Why `basePath` is NOT set here ─────────────────────────────────────────
  *
- * The two workarounds are both worse:
- *   - claim `shriful.tech/_next/*` in the Worker  -> collides with the portfolio
- *   - rewrite HTML and RSC payload bodies         -> fragile against streaming
- *                                                    and edge caching
+ * Setting `basePath: "/protocol"` mounts everything under `/protocol` **on this
+ * origin too**, so the deployment's own root returns 404:
  *
- * `basePath: "/protocol"` makes Next prefix everything it generates — asset
- * URLs, `<Link>` hrefs, router transitions, the RSC payload — with the same
- * prefix the public URL already has. The HTML is then already correct for the
- * browser, and the Worker's only job is to strip the prefix on the way in.
+ *   /            -> 404   (nothing is mounted at the apex)
+ *   /protocol    -> 200
  *
- * ─── The route/shape invariant ──────────────────────────────────────────────
+ * That is the "deployed but the link shows nothing" symptom. It also forces the
+ * Worker into prefix-preserving mode, so the origin can never be opened
+ * directly — the deployment only exists behind the proxy.
  *
- * Because `basePath` supplies `/protocol`, the *app-relative* route must be
- * `/tcp` — not `/protocol/tcp`. That is why the dynamic segment lives at
- * `app/[id]/` and not `app/protocol/[id]/`. Getting this wrong produces either
- * `/protocol/protocol/tcp` (route and prefix both say "protocol") or asset
- * URLs pointing at the portfolio.
+ * With no `basePath`, the prefix becomes the proxy's job alone. That works
+ * because the origin serves the app at `/`, so stripping `/protocol` is a total
+ * mapping: one rule covers pages, RSC payloads, and assets alike.
  *
- * The invariant to preserve:
+ * ─── The invariant ──────────────────────────────────────────────────────────
  *
- *   public URL   = BASE_PATH + app-relative route
- *   origin path  = app-relative route           (after the Worker strips)
+ *   origin path  = app-relative route            (the app's own root)
+ *   public URL   = PUBLIC_PATH_PREFIX + origin path
  *
- * ─── Source of truth ────────────────────────────────────────────────────────
+ * `PUBLIC_PATH_PREFIX` (default "/protocol") is metadata only — canonical and
+ * Open Graph URLs. It must never reach asset paths or in-app `href`s, or the
+ * build stops being portable across hosts. It is validated from the build
+ * output by `npm run test:deployment`.
  *
- * The prefix lives in `src/lib/deployment.ts` and is read from
- * `NEXT_PUBLIC_BASE_PATH`. Both this config and the client fall back to the
- * same defaults: "/protocol" in production, "" in development.
+ * ─── If you ever DO want a subpath on this origin ───────────────────────────
+ *
+ * Set `NEXT_PUBLIC_BASE_PATH=/protocol` and the app mounts under it again —
+ * then the Worker must run with `PROTOCOL_ORIGIN_KEEPS_PREFIX=true`, because the
+ * origin serves `/protocol/tcp` rather than `/tcp`. The two settings must agree;
+ * that pairing is asserted by `cloudflare/validate-config.mjs`.
  */
 
 /** Mirrors `normalisePrefix()` in `src/lib/deployment.ts`. */
 function resolveBasePath(): string {
   const raw = process.env.NEXT_PUBLIC_BASE_PATH;
 
-  if (raw === undefined) {
-    return process.env.NODE_ENV === "production" ? "/protocol" : "";
-  }
+  if (raw === undefined) return "";
 
   const trimmed = raw.trim();
   if (trimmed === "" || trimmed === "/") return "";
@@ -74,14 +71,15 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
 
   /**
-   * Mount the whole app under the public prefix so that every URL Next
-   * generates is already correct for `https://<host><basePath>/...`.
+   * Unset by default — the app owns its origin's root. Only set this if you
+   * deliberately want the app mounted under a subpath on its own host, in which
+   * case the Worker's `PROTOCOL_ORIGIN_KEEPS_PREFIX` must flip to `true`.
    */
   basePath: basePath || undefined,
 
   /**
-   * Trailing slashes off: `/protocol/tcp` and `/protocol/tcp/` should not be
-   * two different cache keys at the edge. Cloudflare serves one canonical form.
+   * Trailing slashes off: `/tcp` and `/tcp/` should not be two different cache
+   * keys at the edge. Cloudflare serves one canonical form.
    */
   trailingSlash: false,
 };

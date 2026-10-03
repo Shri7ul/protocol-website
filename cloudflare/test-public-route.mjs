@@ -94,10 +94,26 @@ function describeHops(hops) {
       /Protocol Atlas/i.test(html),
       `title=${(html.match(/<title>([^<]*)/) ?? [])[1] ?? "?"}`,
     );
+    /**
+     * Assets must be ROOT-relative (`/_next/...`), not prefix-scoped.
+     *
+     * The app is built without `basePath`, so it emits origin-root asset URLs
+     * and the proxy's prefix-strip rule turns `/protocol/_next/x.js` into
+     * `/_next/x.js`. `/_next/...` in the served HTML is therefore correct.
+     *
+     * What would be wrong is `/protocol/_next/...` — that means the build still
+     * has `basePath` set, and the browser would request a path the stripped
+     * origin does not serve.
+     */
     check(
-      "  assets are prefix-scoped",
-      /\/protocol\/_next\//.test(html),
-      "no /protocol/_next/ reference found",
+      "  assets are root-relative (build has basePath unset)",
+      /(?:src|href)="\/_next\//.test(html),
+      "no root-relative /_next/ reference found in the served HTML",
+    );
+    check(
+      "  no prefix-scoped asset refs",
+      !/(?:src|href)="\/protocol\/_next\//.test(html),
+      "found /protocol/_next/ — the deployment was likely built with NEXT_PUBLIC_BASE_PATH=/protocol",
     );
     check(
       "  no doubled prefix",
@@ -120,21 +136,26 @@ for (const page of PAGES) {
 }
 
 // 3 — An asset must load through the proxy and be cacheable.
+//
+// The HTML carries root-relative refs (`/_next/...`), so through the PUBLIC
+// origin the path must be re-prefixed to `PUBLIC_BASE + /_next/...` — that is
+// what the proxy strips again on the way in. Testing the bare `/_next/...`
+// against the portfolio domain would hit the portfolio, not this app.
 {
   const { final } = await trace(BASE);
   if (final?.status === 200) {
     const html = await final.res.text();
-    const asset = html.match(/(?:src|href)="(\/protocol\/_next\/[^"]+)"/);
+    const asset = html.match(/(?:src|href)="(\/_next\/[^"]+)"/);
     if (asset) {
       const url = new URL(asset[1], BASE).toString();
       const res = await fetch(url, { method: "HEAD" });
       check(
         `asset ${asset[1].slice(0, 40)}… -> 200`,
         res.status === 200,
-        `status ${res.status}`,
+        `status ${res.status} (via ${url})`,
       );
     } else {
-      check("asset discoverable in HTML", false, "none found");
+      check("asset discoverable in HTML", false, "no root-relative /_next/ ref found");
     }
   }
 }

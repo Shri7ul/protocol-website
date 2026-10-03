@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ProtocolPresentation } from "@/components/presentation/protocol-presentation";
 import { getProtocol, isProtocolId, PROTOCOL_ORDER } from "@/data/registry";
+import { SITE_URL } from "@/lib/deployment";
 
 /**
  * Statically generate all six protocol pages at build time.
@@ -11,13 +12,13 @@ import { getProtocol, isProtocolId, PROTOCOL_ORDER } from "@/data/registry";
  * is no reason to render these at request time. `generateStaticParams` plus
  * the absence of any dynamic API means these ship as prerendered HTML.
  *
- * The route segment is `[id]`, NOT `protocol/[id]`, and that is deliberate.
- * This app is published under the public prefix `/protocol` via `basePath`, so
- * the app-relative path must be `/tcp` for the browser to end up at
- * `/protocol/tcp`. Naming the folder `protocol/` as well would produce
- * `/protocol/protocol/tcp`.
+ * The route segment is `[id]`, NOT `protocol/[id]`. The app is mounted at its
+ * own origin's root, so the app-relative path is `/tcp`; the `/protocol` segment
+ * is added by the reverse proxy on the portfolio domain. Naming the folder
+ * `protocol/` would not double anything now, but it would collide if the app
+ * were ever mounted under a subpath again.
  *
- * Result, with `basePath = "/protocol"`:
+ * Result:
  *
  *   app-relative route   public URL
  *   /                    https://shriful.tech/protocol
@@ -62,6 +63,17 @@ export async function generateMetadata({
       "networking",
       "interactive",
     ],
+    /**
+     * Override the layout's canonical. Without this every protocol page
+     * inherits `SITE_URL` (`/protocol`) and all seven claim to be the same
+     * document, which suppresses six of them from search results.
+     *
+     * `SITE_URL` is the PUBLIC address (portfolio origin + `/protocol`), which is
+     * not derivable from `basePath` — the app is mounted at its own origin's root.
+     */
+    alternates: {
+      canonical: `${SITE_URL}/${id}`,
+    },
     openGraph: {
       title: `${protocol.name} — ${protocol.longName}`,
       description: protocol.hook,

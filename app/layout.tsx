@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 
 import { SiteHeader } from "@/components/shell/site-header";
-import { BASE_PATH, SITE_ORIGIN } from "@/lib/deployment";
+import { SITE_ORIGIN, SITE_URL } from "@/lib/deployment";
 
 import "./globals.css";
 
@@ -28,8 +28,11 @@ const mono = JetBrains_Mono({
  *
  * This is the *public* origin — the portfolio, not the Vercel deployment — so
  * that `og:url` and the canonical link point at the address a visitor actually
- * sees. The path prefix is applied per-page by Next, which already knows about
- * `basePath`.
+ * sees.
+ *
+ * Note the canonical path is NOT derived from `basePath`. The app is mounted at
+ * its origin's root, so `basePath` is empty; the `/protocol` segment exists only
+ * on the portfolio domain and comes from `SITE_URL` (origin + public prefix).
  *
  * Both values come from `src/lib/deployment.ts`, so the domain is never
  * hard-coded in a component.
@@ -66,12 +69,18 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   /**
-   * Declare the public address explicitly. Behind a reverse proxy the origin
-   * only ever sees the stripped path, so without this a crawler could
-   * canonicalise the app to the Vercel hostname.
+   * Declare the public address explicitly.
+   *
+   * The canonical URL uses `PUBLIC_PATH_PREFIX` (where the app appears on the
+   * portfolio), NOT `BASE_PATH` (where it is mounted on its own origin, which is
+   * the root). Using `BASE_PATH` here would emit `https://shriful.tech/` — the
+   * portfolio's home page — and tell search engines this app *is* the portfolio.
+   *
+   * Behind the reverse proxy the origin only ever sees the stripped path, so
+   * without this a crawler could also canonicalise to the Vercel hostname.
    */
   alternates: {
-    canonical: `${SITE_ORIGIN}${BASE_PATH || "/"}`,
+    canonical: SITE_URL,
   },
 };
 
