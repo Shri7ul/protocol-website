@@ -9,15 +9,58 @@ exactly what the Cloudflare Worker is expected to do.
 
 ```
 Browser                     Cloudflare Worker              Vercel
-shriful.tech/protocol   ->  strip the prefix          ->   website-protocol.vercel.app/
-shriful.tech/protocol/tcp -> strip the prefix         ->   website-protocol.vercel.app/tcp
-shriful.tech/protocol/_next/... -> strip the prefix   ->   website-protocol.vercel.app/_next/...
-shriful.tech/anything-else -> served by the portfolio, never proxied
+shriful.tech/protocol   ->  forward unchanged         ->   website-protocol-ten.vercel.app/protocol
+shriful.tech/protocol/tcp -> forward unchanged        ->   website-protocol-ten.vercel.app/protocol/tcp
+shriful.tech/protocol/_next/... -> forward unchanged  ->   website-protocol-ten.vercel.app/protocol/_next/...
+shriful.tech/anything-else -> not routed to this Worker
 ```
 
 The `/protocol` segment **stays in the browser address bar**. The Worker uses a
 reverse proxy, not a redirect — nothing ever sends the visitor to the Vercel
 hostname.
+
+> **The origin hostname is `-ten`.** `website-protocol.vercel.app` (without the
+> suffix) serves a *different* project — "RADAR - AI Governance Evidence |
+> AKIOUD AI" — and 404s on `/protocol/_next/...`. The `-ten` form is Vercel's
+> name-suffix disambiguator for the project literally named
+> `website-protocol`. Confusing the two produces 404s everywhere; see
+> *Choosing the origin* below.
+
+### Does the Worker strip the prefix? It depends on the origin
+
+Two deployments both built with `basePath: "/protocol"` can present differently:
+
+| Origin serves | `PROTOCOL_ORIGIN_KEEPS_PREFIX` | Worker maps `/protocol/tcp` to |
+|---|---|---|
+| `/tcp` (deployed at its own root) | `"false"` (default) | `/tcp` — strips |
+| `/protocol/tcp` (deployed at its apex) | `"true"` | `/protocol/tcp` — unchanged |
+
+`website-protocol-ten.vercel.app` is the **second** kind: `/protocol/tcp` → 200,
+`/tcp` → 404. So production sets the flag to `"true"`.
+
+Both settings produce valid-looking URLs; only one matches the origin. Getting it
+wrong yields a wall of 404s with no other symptom, so **ask the origin** rather
+than guessing:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://<origin>/protocol
+curl -s -o /dev/null -w '%{http_code}\n' https://<origin>/tcp
+```
+
+`/protocol` → 200 and `/tcp` → 404 means `KEEPS_PREFIX=true`.
+
+### Choosing the origin
+
+```bash
+# 200 -> Protocol Atlas. 404 -> not our app.
+for h in website-protocol.vercel.app website-protocol-ten.vercel.app; do
+  printf '%-42s %s  %s\n' "$h" \
+    "$(curl -s -o /dev/null -w '%{http_code}' https://$h/protocol)" \
+    "$(curl -s https://$h/protocol | grep -o '<title>[^<]*' | head -1)"
+done
+```
+
+`npm run test:live` automates exactly this against the configured origin.
 
 ### Why `basePath` rather than Worker-only stripping
 
@@ -57,22 +100,25 @@ That is why the dynamic segment lives at `app/[id]/` and **not**
 This is the contract the build output actually emits. Every row was verified
 against `.next/server/app/*.html` and `*.rsc`.
 
-### Paths the Worker must strip and forward
+### Paths the Worker forwards
 
-| Incoming request | Origin path | Notes |
-|---|---|---|
-| `GET /protocol` | `/` | prefix root maps to app root |
-| `GET /protocol/` | `/` | trailing slash collapses |
-| `GET /protocol/tcp` | `/tcp` | protocol page |
-| `GET /protocol/udp` … `/can` | `/udp` … `/can` | all six, SSG |
-| `GET /protocol/_next/static/...` | `/_next/static/...` | content-hashed chunks |
-| `GET /protocol/_next/static/css/...` | `/_next/static/css/...` | stylesheet |
-| `GET /protocol/favicon.ico` | `/favicon.ico` | static metadata files |
-| `GET /protocol/tcp?_rsc=abc` | `/tcp?_rsc=abc` | **client router fetch** |
+Production uses `PROTOCOL_ORIGIN_KEEPS_PREFIX=true`, so the prefix is forwarded
+unchanged. The stripping variant is shown alongside for completeness.
 
-The rule is total — everything under `/protocol` is forwarded with the prefix
-removed. There is no per-asset special-casing, because a single prefix strip
-covers every case.
+| Incoming request | Origin path (keeps prefix) | Origin path (strips) | Notes |
+|---|---|---|---|
+| `GET /protocol` | `/protocol` | `/` | app root |
+| `GET /protocol/` | `/protocol` | `/` | trailing slash collapses |
+| `GET /protocol/tcp` | `/protocol/tcp` | `/tcp` | protocol page |
+| `GET /protocol/udp` … `/can` | `/protocol/udp` … | `/udp` … | all six, SSG |
+| `GET /protocol/_next/static/...` | `/protocol/_next/static/...` | `/_next/static/...` | content-hashed chunks |
+| `GET /protocol/_next/static/css/...` | `/protocol/_next/static/css/...` | `/_next/static/css/...` | stylesheet |
+| `GET /protocol/favicon.ico` | `/protocol/favicon.ico` | `/favicon.ico` | static metadata |
+| `GET /protocol/tcp?_rsc=abc` | `/protocol/tcp?_rsc=abc` | `/tcp?_rsc=abc` | **client router fetch** |
+
+The rule is total — everything under `/protocol` is forwarded, with or without
+the prefix depending on the origin's shape. There is no per-asset
+special-casing.
 
 ### Paths the Worker should not handle
 
@@ -206,7 +252,11 @@ npx wrangler deploy
 Config lives in `cloudflare/wrangler.jsonc`:
 
 - `PROTOCOL_PREFIX` — must equal the build's `NEXT_PUBLIC_BASE_PATH`.
-- `PROTOCOL_ORIGIN` — the Vercel deployment, **without** the prefix.
+- `PROTOCOL_ORIGIN` — the deployment serving the app. Production:
+  `https://website-protocol-ten.vercel.app` (note `-ten`).
+- `PROTOCOL_ORIGIN_KEEPS_PREFIX` — `"true"` for this origin, because it serves
+  the app under `/protocol` already. See *Choosing the origin* above for the
+  two-`curl` method that decides it.
 - `PORTFOLIO_ORIGIN` — **leave unset in production.** It is only needed if you
   want the workers.dev preview URL to proxy non-`/protocol` paths. There is no
   default, deliberately: a guessed portfolio origin would silently send a
@@ -307,26 +357,28 @@ Both run the Worker in plain Node against stub origins. No network, no
 credentials, no Cloudflare account.
 
 ```bash
-npm run test:worker      # 26 behavioural assertions
-npm run test:contract    # 9 production routing rows
+npm run test:worker      # 34 behavioural assertions
+npm run test:contract    # 13 routing rows, both origin shapes
+npm run test:live        # 13 assertions against the REAL origin (uses network)
 ```
 
-`test-contract.mjs` transcribes the deployment requirement row by row, so the
-contract cannot drift silently:
+`test-live-origin.mjs` is the one that validates the deployment decision rather
+than the code: it fetches the configured origin directly and asserts the app is
+reachable under the prefix *and unreachable without it* — which is what makes
+`PROTOCOL_ORIGIN_KEEPS_PREFIX=true` mandatory instead of merely plausible.
+
+`test-contract.mjs` transcribes the routing requirement row by row in **both**
+modes, so neither shape can drift silently:
 
 ```
-/protocol                  -> /
-/protocol/tcp              -> /tcp
-/protocol/udp              -> /udp
-/protocol/http             -> /http
-/protocol/https            -> /https
-/protocol/i2c              -> /i2c
-/protocol/can              -> /can
-/protocol/_next/static/... -> /_next/static/...
+-- keeps prefix --                    -- strips prefix --
+/protocol                  -> /protocol   /protocol                  -> /
+/protocol/tcp              -> /protocol/tcp   /protocol/tcp              -> /tcp
+/protocol/_next/static/... -> /protocol/_next/static/...   /protocol/_next/static/... -> /_next/static/...
 ```
 
-`test-worker.mjs` covers the behavioural surface, including the regression that
-caused the reported `TypeError`:
+`test-worker.mjs` covers the behavioural surface, including the regressions that
+caused the two reported failures:
 
 | Group | Assertions |
 |---|---|
@@ -338,14 +390,17 @@ caused the reported `TypeError`:
 | **no `ASSETS` binding** | `/about` does not throw; falls back to `PORTFOLIO_ORIGIN` |
 | **preview URL** | `/` does not throw, is not a recursion loop, names the working URLs |
 | **preview + prefix** | `/protocol/tcp` still reverse-proxies correctly |
+| **keeps prefix** | root/page/asset mapping, caching, query, no false 500 |
 | config | `PROTOCOL_PREFIX=/` disables the prefix |
 
 > **What is and is not verified.** The Worker's routing, header handling,
-> rewrite behaviour and binding-absence handling are verified by the suites
-> above; the Next.js build output is verified against §2. What has **not** been
-> exercised is a live request from Cloudflare's edge to the real Vercel
-> deployment — that needs the domain route attached. Do not call the deployment
-> verified until you have run the §4a checks and seen them pass.
+> rewrite behaviour, binding-absence handling and prefix-keeping are verified by
+> the suites above; the build output is verified against §2; and
+> `npm run test:live` confirms the configured origin serves the app under the
+> prefix. What has **not** been exercised is a request through Cloudflare's edge
+> to the real origin — that needs the `shriful.tech/protocol*` route attached
+> and a deployed Worker. Do not call the deployment verified until you have run
+> the §4a checks and seen them pass.
 
 ---
 
@@ -370,6 +425,7 @@ It also deletes `cf-*` headers before forwarding, and strips `x-vercel-id`,
 | `src/lib/deployment.ts` | `BASE_PATH`, `SITE_ORIGIN`, `SITE_URL`, `stripBasePath()` |
 | `cloudflare/worker.js` | the reverse proxy |
 | `cloudflare/wrangler.jsonc` | Worker config (`vars` only — no `assets`) |
-| `cloudflare/test-worker.mjs` | behavioural suite, 26 assertions |
-| `cloudflare/test-contract.mjs` | production routing table, 9 rows |
+| `cloudflare/test-worker.mjs` | behavioural suite, 34 assertions |
+| `cloudflare/test-contract.mjs` | routing table, both origin shapes |
+| `cloudflare/test-live-origin.mjs` | validates the configured origin over the network |
 | `app/[id]/page.tsx` | protocol route — app-relative `/tcp`, not `/protocol/tcp` |

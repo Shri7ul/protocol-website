@@ -51,9 +51,25 @@
     // Public prefix. MUST equal NEXT_PUBLIC_BASE_PATH used to build the app.
     "PROTOCOL_PREFIX": "/protocol",
 
-    // Scheme + host serving the app, WITHOUT the prefix and without a
-    // trailing slash. Vercel exposes the app at its deployment root.
-    "PROTOCOL_ORIGIN": "https://website-protocol.vercel.app"
+    // The deployment that actually serves Protocol Atlas.
+    //
+    // Verified 2026-10-03: `website-protocol.vercel.app` (without `-ten`) serves
+    // a DIFFERENT project — "RADAR - AI Governance Evidence | AKIOUD AI" — and
+    // 404s on `/protocol/_next/...`. Pointing at it produces 404s everywhere.
+    //
+    // `-ten` is the SvelteKit/Vercel name-suffix form of the same project name,
+    // which is why the two are easy to confuse.
+    "PROTOCOL_ORIGIN": "https://website-protocol-ten.vercel.app",
+
+    // This origin already serves the app UNDER `/protocol`.
+    //
+    // Verified: `/protocol/tcp` -> 200, `/tcp` -> 404. So the Worker must NOT
+    // strip the prefix; it forwards the path unchanged.
+    //
+    // Removing this line (or setting it false) makes the Worker send `/tcp`,
+    // which this origin 404s. Both settings look correct in isolation; only one
+    // matches the origin.
+    "PROTOCOL_ORIGIN_KEEPS_PREFIX": "true"
 
     // PORTFOLIO_ORIGIN is intentionally NOT set.
     //

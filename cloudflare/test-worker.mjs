@@ -35,6 +35,24 @@ const origin = http.createServer((req, res) => {
     res.end("console.log('chunk')");
     return;
   }
+  // Mirrors an origin that serves the app UNDER the prefix: its asset namespace
+  // is `/protocol/_next/static/...`. Without this the keeps-prefix asset test
+  // would receive a 404 and could not observe the caching header.
+  if (req.url.startsWith("/protocol/_next/static/")) {
+    res.writeHead(200, { "content-type": "application/javascript" });
+    res.end("console.log('chunk')");
+    return;
+  }
+  if (req.url === "/protocol" || req.url === "/protocol/") {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<!doctype html><h1>origin root</h1>");
+    return;
+  }
+  if (req.url === "/protocol/tcp" || req.url.startsWith("/protocol/tcp?")) {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("<!doctype html><h1>tcp</h1>");
+    return;
+  }
   if (req.url === "/tcp" || req.url.startsWith("/tcp?")) {
     res.writeHead(200, { "content-type": "text/html" });
     res.end("<!doctype html><h1>tcp</h1>");
@@ -131,8 +149,27 @@ const PREVIEW_ROOT = "https://protocol.smislam5959.workers.dev/";
 /** Preview protocol request. */
 const PREVIEW_TCP = "https://protocol.smislam5959.workers.dev/protocol/tcp";
 
+/**
+ * Origin that serves the app UNDER the prefix already.
+ *
+ * This is the REAL production shape: `website-protocol-ten.vercel.app` answers
+ * `/protocol/tcp` with 200 and `/tcp` with 404, because the deployment carries
+ * `basePath: "/protocol"` and is served at its apex.
+ */
+const envKeepsPrefix = {
+  PROTOCOL_PREFIX: "/protocol",
+  PROTOCOL_ORIGIN: `http://127.0.0.1:${ORIGIN_PORT}`,
+  PROTOCOL_ORIGIN_KEEPS_PREFIX: "true",
+};
+
 const call = (path, init) =>
   worker.fetch(new Request(`http://shriful.tech${path}`, init), env);
+
+const callKeeps = (path) =>
+  worker.fetch(
+    new Request(`http://shriful.tech${path}`),
+    envKeepsPrefix,
+  );
 
 const last = () => seen[seen.length - 1];
 
@@ -408,6 +445,97 @@ check(
   threw === null && !bareBody.includes(`127.0.0.1:${ORIGIN_PORT}`) &&
     !bareBody.includes(PORTFOLIO_ORIGIN),
   "origin hostname present in fallback body",
+);
+
+// ---------------------------------------------------------------------------
+// PROTOCOL_ORIGIN_KEEPS_PREFIX=true — the real production origin shape
+// ---------------------------------------------------------------------------
+//
+// The origin serves the app under `/protocol` already, so the Worker must
+// forward the path UNCHANGED. If it stripped, every route would 404 — which is
+// exactly the reported bug.
+
+// 18 — the root maps to the origin's prefixed root, not "/".
+threw = null;
+try {
+  res = await callKeeps("/protocol");
+  await res.text();
+} catch (error) {
+  threw = error;
+}
+check(
+  "keeps-prefix: /protocol -> origin /protocol",
+  threw === null && last().url === "/protocol",
+  threw ? `${threw.constructor.name}` : `origin saw ${last().url}`,
+);
+
+// 19 — a protocol page keeps the prefix.
+res = await callKeeps("/protocol/tcp");
+await res.text();
+check(
+  "keeps-prefix: /protocol/tcp -> origin /protocol/tcp",
+  last().url === "/protocol/tcp",
+  `origin saw ${last().url}`,
+);
+
+// 20 — assets keep the prefix, AND still get immutable caching.
+//
+// The caching rule must key on the PUBLIC path. Keying on the mapped origin
+// path would silently stop matching here, because that path now begins
+// `/protocol/_next/...` rather than `/_next/...`.
+res = await callKeeps("/protocol/_next/static/chunks/abc.js");
+await res.text();
+check(
+  "keeps-prefix: /_next/... forwarded with prefix",
+  last().url === "/protocol/_next/static/chunks/abc.js",
+  `origin saw ${last().url}`,
+);
+check(
+  "keeps-prefix: immutable caching still applied",
+  res.headers.get("cache-control") === "public, max-age=31536000, immutable",
+  `got ${res.headers.get("cache-control")}`,
+);
+
+// 21 — query strings survive in this mode too.
+res = await callKeeps("/protocol/tcp?_rsc=abc123");
+await res.text();
+check(
+  "keeps-prefix: query preserved",
+  last().url === "/protocol/tcp?_rsc=abc123",
+  `origin saw ${last().url}`,
+);
+
+// 22 — HTML still revalidates in this mode.
+res = await callKeeps("/protocol/tcp");
+await res.text();
+check(
+  "keeps-prefix: HTML must revalidate",
+  /must-revalidate/.test(res.headers.get("cache-control") ?? ""),
+  `got ${res.headers.get("cache-control")}`,
+);
+
+// 23 — the doubled-prefix guard must NOT fire when keeping the prefix.
+//
+// `/protocol/tcp` legitimately maps to `/protocol/tcp`, so a naive guard would
+// reject every request and return a 500.
+res = await callKeeps("/protocol/tcp");
+check(
+  "keeps-prefix: no false 500 diagnostic",
+  res.status !== 500,
+  `status ${res.status}`,
+);
+
+// 24 — the two modes must genuinely differ, proving the flag is read.
+res = await call("/protocol/tcp");
+await res.text();
+const strippedPath = last().url;
+res = await callKeeps("/protocol/tcp");
+await res.text();
+const keptPath = last().url;
+check(
+  "modes differ: strip vs keep",
+  strippedPath === "/tcp" && keptPath === "/protocol/tcp",
+  `strip=${strippedPath} keep=${keptPath}`,
 );
 
 console.log("\n=== Cloudflare Worker behaviour ===\n");

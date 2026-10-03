@@ -53,9 +53,34 @@
  *   PROTOCOL_PREFIX   Public path prefix. Must equal `basePath` in the Next.js
  *                     build (`NEXT_PUBLIC_BASE_PATH`). "/protocol" by default.
  *
- *   PROTOCOL_ORIGIN   Scheme + host of the deployment that serves the app. Must
- *                     be absolute and must NOT carry the prefix — the prefix is
- *                     applied by this Worker, not by the origin.
+ *   PROTOCOL_ORIGIN   Scheme + host of the deployment that serves the app.
+ *                     Absolute, no trailing slash.
+ *
+ *                     Whether the ORIGIN also keeps the prefix depends on how
+ *                     that deployment was built — see
+ *                     `PROTOCOL_ORIGIN_KEEPS_PREFIX`.
+ *
+ *   PROTOCOL_ORIGIN_KEEPS_PREFIX
+ *                     "true" when the origin serves the app ALREADY under the
+ *                     prefix, i.e. the origin's own `basePath` equals
+ *                     PROTOCOL_PREFIX. In that case the Worker forwards the path
+ *                     unchanged instead of stripping it.
+ *
+ *                     This is the difference between two real deployments:
+ *
+ *                       false (default) — origin built with basePath "/protocol"
+ *                                         BUT served at its own root, so the
+ *                                         Worker strips: /protocol/tcp -> /tcp
+ *
+ *                       true            — origin built with basePath "/protocol"
+ *                                         and served at the apex, so its routes
+ *                                         live at /protocol/tcp and the Worker
+ *                                         must NOT strip.
+ *
+ *                     Getting this wrong is invisible except as a wall of 404s:
+ *                     both settings produce valid URLs, only one matches the
+ *                     origin. Verify with a single `curl` to the origin root
+ *                     before choosing.
  *
  *   PORTFOLIO_ORIGIN  Optional. Scheme + host of the portfolio, used for
  *                     requests OUTSIDE the prefix.
@@ -111,6 +136,21 @@ function resolveOptionalOrigin(raw) {
   return raw.trim().replace(/\/+$/, "");
 }
 
+/**
+ * Whether the origin serves the app under the prefix already.
+ *
+ * Accepts the common truthy/falsey spellings a `vars` value can take. Unset is
+ * `false`, preserving the original strip-the-prefix behaviour.
+ *
+ * @param {string | boolean | undefined} raw
+ */
+function resolveKeepsPrefix(raw) {
+  if (raw === undefined || raw === null) return false;
+  if (typeof raw === "boolean") return raw;
+  const normalised = raw.trim().toLowerCase();
+  return normalised === "true" || normalised === "1" || normalised === "yes";
+}
+
 const worker = {
   /**
    * @param {Request} request
@@ -118,12 +158,14 @@ const worker = {
    *   ASSETS?: { fetch: (r: Request) => Promise<Response> },
    *   PROTOCOL_PREFIX?: string,
    *   PROTOCOL_ORIGIN?: string,
+   *   PROTOCOL_ORIGIN_KEEPS_PREFIX?: string,
    *   PORTFOLIO_ORIGIN?: string,
    * }} env
    */
   async fetch(request, env) {
     const PREFIX = resolvePrefix(env.PROTOCOL_PREFIX);
     const ORIGIN = resolveOrigin(env.PROTOCOL_ORIGIN);
+    const KEEPS_PREFIX = resolveKeepsPrefix(env.PROTOCOL_ORIGIN_KEEPS_PREFIX);
     const url = new URL(request.url);
     const { pathname, search } = url;
 
@@ -137,22 +179,37 @@ const worker = {
       return servePortfolio(request, env);
     }
 
-    // ---- Strip the prefix ---------------------------------------------------
+    // ---- Map the public path onto the origin path ----------------------------
     //
-    // `/protocol`      -> "/"
-    // `/protocol/`     -> "/"
-    // `/protocol/tcp`  -> "/tcp"
+    // Two shapes, chosen by PROTOCOL_ORIGIN_KEEPS_PREFIX.
     //
-    // With an empty prefix (PROTOCOL_PREFIX aiming at the origin root) the
-    // route is already origin-relative, so nothing is sliced.
-    let originPath = PREFIX === "" ? pathname : pathname.slice(PREFIX.length);
+    //   strips      (default)   /protocol/tcp -> /tcp
+    //   keeps prefix (true)     /protocol/tcp -> /protocol/tcp
+    //
+    // Both are legitimate. An origin built with `basePath: "/protocol"` but
+    // deployed at its own root serves `/tcp`; the same build on a host whose
+    // apex IS the app serves `/protocol/tcp`. The only way to tell them apart is
+    // to ask the origin, so this is configuration rather than guesswork.
+    let originPath;
+    if (KEEPS_PREFIX) {
+      originPath = pathname;
+    } else if (PREFIX === "") {
+      // Empty prefix: the route is already origin-relative.
+      originPath = pathname;
+    } else {
+      originPath = pathname.slice(PREFIX.length);
+    }
     if (originPath === "" || originPath === "/") {
-      originPath = "/";
+      originPath = KEEPS_PREFIX ? PREFIX : "/";
     }
 
-    // A path that reached here with a doubled prefix means the app was built
-    // without `basePath` — fail loudly instead of silently 404ing.
-    if (PREFIX !== "" && originPath.startsWith(`${PREFIX}/`)) {
+    // Diagnostics: a doubled prefix means the app was built without `basePath`
+    // while the Worker is also stripping — fail loudly instead of 404ing.
+    if (
+      !KEEPS_PREFIX &&
+      PREFIX !== "" &&
+      originPath.startsWith(`${PREFIX}/`)
+    ) {
       return new Response(
         [
           "Misconfigured deployment: the origin path still contains the prefix.",
@@ -162,6 +219,10 @@ const worker = {
           "",
           "The Next.js app was probably built without `basePath: \"/protocol\"`.",
           "Rebuild with NEXT_PUBLIC_BASE_PATH=/protocol.",
+          "",
+          "If the origin genuinely serves the app WITH the prefix, set",
+          "PROTOCOL_ORIGIN_KEEPS_PREFIX=true instead — then the Worker stops",
+          "stripping and forwards the path unchanged.",
         ].join("\n"),
         { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } },
       );
@@ -249,7 +310,13 @@ const worker = {
     responseHeaders.delete("server");
 
     // Content-hashed build output never changes under a given filename.
-    const isImmutableAsset = originPath.startsWith("/_next/static/");
+    //
+    // Keyed on the PUBLIC path, not `originPath`: the public path is
+    // `/_next/static/...` regardless of whether the origin keeps the prefix, so
+    // the rule holds for both shapes. Keying on `originPath` would silently stop
+    // matching when PROTOCOL_ORIGIN_KEEPS_PREFIX is true.
+    const isImmutableAsset = pathname.startsWith(`${PREFIX}/_next/static/`) ||
+      pathname.startsWith("/_next/static/");
     if (isImmutableAsset && upstream.ok) {
       responseHeaders.set(
         "cache-control",
