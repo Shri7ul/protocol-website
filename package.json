@@ -10,15 +10,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test:worker": "node cloudflare/test-worker.mjs",
-    "test:contract": "node cloudflare/test-contract.mjs",
-    "test:config": "node cloudflare/validate-config.mjs",
-    "test:root": "node cloudflare/check-root-nav.mjs",
-    "test:diagnose": "node cloudflare/diagnose-prefix.mjs",
-    "test:live": "node cloudflare/test-live-origin.mjs",
-    "test:public": "node cloudflare/test-public-route.mjs",
-    "test:local": "npm run test:worker && npm run test:contract && npm run test:config && npm run test:live",
-    "test": "npm run test:local"
+    "test": "node scripts/verify-render.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

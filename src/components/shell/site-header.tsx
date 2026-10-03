@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { PROTOCOL_ORDER, protocols } from "@/data/registry";
-import { stripBasePath } from "@/lib/deployment";
 
 /**
  * The persistent top bar.
@@ -15,18 +14,13 @@ import { stripBasePath } from "@/lib/deployment";
  * the primary way to jump to a protocol without hunting through the orbit.
  */
 export function SiteHeader() {
-  const rawPathname = usePathname();
+  /**
+   * The app owns its origin's root, so `usePathname()` already returns the
+   * app-relative path ("/tcp"), with no deployment prefix to strip.
+   */
+  const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
-
-  /**
-   * `usePathname()` includes the deployment prefix, so on production it
-   * reports "/protocol/tcp" for a route that is "/tcp" in this app. Every
-   * comparison below is made against the normalised, app-relative form —
-   * otherwise the active-state highlighting silently stops matching once the
-   * app is mounted under a prefix.
-   */
-  const pathname = stripBasePath(rawPathname);
 
   /** Only the six real protocol routes count — not the 404 page. */
   const onProtocolPage = PROTOCOL_ORDER.some((id) => pathname === `/${id}`);

@@ -8,10 +8,6 @@ import { protocols } from "@/data/registry";
  * Reached by an invalid `/<id>` — anything outside the six defined ids, since
  * `dynamicParams = false` turns unknown params into a 404. It shows the valid
  * set rather than a dead end.
- *
- * Publicly this is served for e.g. `https://shriful.tech/protocol/bogus`: the
- * Worker strips the prefix, the origin sees `/bogus`, no route or param
- * matches, and Next returns this document with a 404 status.
  */
 export default function NotFound() {
   return (

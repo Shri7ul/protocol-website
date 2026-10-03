@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 
 import type { Comparison } from "@/data/types";
@@ -14,7 +13,6 @@ import type { Comparison } from "@/data/types";
  */
 export function ComparisonTable({ comparison }: { comparison: Comparison }) {
   const [activeRow, setActiveRow] = useState<number | null>(null);
-  const reduce = useReducedMotion();
 
   const columns = comparison.columns;
 
@@ -130,15 +128,15 @@ export function ComparisonTable({ comparison }: { comparison: Comparison }) {
         </table>
       </div>
 
-      <motion.p
-        initial={reduce ? false : { opacity: 0 }}
-        whileInView={{ opacity: 1 }}
-        viewport={{ once: true }}
-        className="mt-4 text-[11.5px] leading-relaxed text-ink-faint"
-      >
+      {/*
+        A hint, not an entrance: it was `initial={{ opacity: 0 }}` +
+        `whileInView`, which meant a page whose observer never fired simply had
+        no instruction text. Fade-free and always legible.
+      */}
+      <p className="mt-4 text-[11.5px] leading-relaxed text-ink-faint">
         Hover a row to isolate it. No column is better — each mechanism is the
         right answer to a different constraint.
-      </motion.p>
+      </p>
     </div>
   );
 }

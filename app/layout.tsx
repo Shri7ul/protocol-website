@@ -26,16 +26,14 @@ const mono = JetBrains_Mono({
 /**
  * Canonical origin for metadata.
  *
- * This is the *public* origin — the portfolio, not the Vercel deployment — so
- * that `og:url` and the canonical link point at the address a visitor actually
- * sees.
+ * This is the origin the app is actually served from, so `og:url` and the
+ * canonical link point at the address a visitor sees. It comes from
+ * `src/lib/deployment.ts`, so the hostname is never hard-coded in a component
+ * and can be changed by setting `NEXT_PUBLIC_SITE_ORIGIN`.
  *
- * Note the canonical path is NOT derived from `basePath`. The app is mounted at
- * its origin's root, so `basePath` is empty; the `/protocol` segment exists only
- * on the portfolio domain and comes from `SITE_URL` (origin + public prefix).
- *
- * Both values come from `src/lib/deployment.ts`, so the domain is never
- * hard-coded in a component.
+ * The canonical path is the origin root because the app owns `/` — the routes
+ * are `/`, `/tcp`, `/udp`, `/http`, `/https`, `/i2c` and `/can`, with no
+ * deployment prefix, so no URL arithmetic is required.
  */
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_ORIGIN),
@@ -69,15 +67,8 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   /**
-   * Declare the public address explicitly.
-   *
-   * The canonical URL uses `PUBLIC_PATH_PREFIX` (where the app appears on the
-   * portfolio), NOT `BASE_PATH` (where it is mounted on its own origin, which is
-   * the root). Using `BASE_PATH` here would emit `https://shriful.tech/` — the
-   * portfolio's home page — and tell search engines this app *is* the portfolio.
-   *
-   * Behind the reverse proxy the origin only ever sees the stripped path, so
-   * without this a crawler could also canonicalise to the Vercel hostname.
+   * Declare the app's address explicitly, so a crawler always resolves this to
+   * the origin that actually serves it rather than inferring one.
    */
   alternates: {
     canonical: SITE_URL,

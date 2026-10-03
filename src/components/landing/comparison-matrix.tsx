@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 
 import { cn } from "@/lib/utils";
@@ -194,7 +193,6 @@ const ROWS: Row[] = [
 
 export function ComparisonMatrix() {
   const [activeRow, setActiveRow] = useState<number | null>(1);
-  const reduce = useReducedMotion();
 
   return (
     <div>
@@ -317,11 +315,14 @@ export function ComparisonMatrix() {
       {/* ------------------- the row explanation ------------------- */}
       <div className="mt-5 min-h-[68px]">
         {activeRow !== null ? (
-          <motion.div
+          /*
+           * Keyed on `activeRow`, so choosing a different row already remounts
+           * this element and the text swaps instantly. The opacity fade added
+           * nothing except 250ms of invisible explanatory copy on first paint,
+           * which the empty state below already covers honestly.
+           */
+          <div
             key={activeRow}
-            initial={reduce ? false : { opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25 }}
             className="flex flex-wrap items-start gap-x-5 gap-y-2 rounded-lg border border-line bg-surface/50 px-4 py-3.5"
           >
             <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink">
@@ -330,7 +331,7 @@ export function ComparisonMatrix() {
             <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-ink-soft">
               {ROWS[activeRow]?.why}
             </p>
-          </motion.div>
+          </div>
         ) : (
           <p className="atlas-label py-4">
             Select a row to see why that dimension matters

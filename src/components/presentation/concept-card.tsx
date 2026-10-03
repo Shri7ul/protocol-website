@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 
 import type { Concept, GlyphId } from "@/data/types";
+import { RISE_REDUCED, rise } from "@/lib/motion";
 
 /**
  * ConceptCard — a single mechanism, with a purpose-drawn glyph.
@@ -27,10 +28,9 @@ export function ConceptCard({
 
   return (
     <motion.div
-      initial={reduce ? false : { opacity: 0, y: 14 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-40px" }}
-      transition={{ duration: 0.45, delay: reduce ? 0 : index * 0.05 }}
+      /* Transform-only: the card's text is visible in the served HTML even if
+         the scroll observer never runs. See src/lib/motion.ts. */
+      {...(reduce ? RISE_REDUCED : rise(14, index * 0.05))}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={() => setHovered(true)}

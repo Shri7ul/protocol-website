@@ -4,6 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 
 import type { HeaderField, HeaderRow } from "@/data/types";
+import { RISE_REDUCED, rise } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 /**
@@ -66,10 +67,15 @@ export function HeaderVisualizer({
           {rows.map((row, ri) => (
             <motion.div
               key={row.label ?? `row-${ri}`}
-              initial={reduce ? false : { opacity: 0, y: 10 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-40px" }}
-              transition={{ duration: 0.4, delay: reduce ? 0 : ri * 0.06 }}
+              /*
+               * Transform-only entrance. `initial={{ opacity: 0 }}` was baked
+               * into the prerendered HTML as `style="opacity:0"` and only
+               * removed by the scroll observer — so a reader with JS blocked,
+               * or one who never scrolled the row into view, had a header
+               * diagram with no field labels at all. Content is now visible at
+               * rest and the animation is pure offset.
+               */
+              {...(reduce ? RISE_REDUCED : rise(10, ri * 0.06))}
             >
               {row.label ? (
                 <div className="mb-1 flex items-center gap-2">
@@ -175,8 +181,8 @@ export function HeaderVisualizer({
               {selected ? (
                 <motion.div
                   key={`${selected.field.name}-${selected.row}`}
-                  initial={reduce ? false : { opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
+                  initial={reduce ? false : { y: 8 }}
+                  animate={{ y: 0 }}
                   exit={reduce ? undefined : { opacity: 0, y: -6 }}
                   transition={{ duration: 0.2 }}
                   className="p-4 sm:p-5"
@@ -223,10 +229,8 @@ export function HeaderVisualizer({
                   ) : null}
                 </motion.div>
               ) : (
-                <motion.div
+                <div
                   key="empty"
-                  initial={reduce ? false : { opacity: 0 }}
-                  animate={{ opacity: 1 }}
                   className="flex min-h-[290px] flex-col items-center justify-center gap-3 p-6 text-center"
                 >
                   {/* A quiet glyph so the empty state still looks designed. */}
@@ -259,7 +263,7 @@ export function HeaderVisualizer({
                     Select any field to see what it does, how wide it is, and a
                     real value from a live packet.
                   </p>
-                </motion.div>
+                </div>
               )}
             </AnimatePresence>
           </div>

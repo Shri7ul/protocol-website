@@ -111,10 +111,9 @@ export function ProtocolPresentation({ protocol }: { protocol: ProtocolDefinitio
           /*
            * Escape returns to the overview, per the brief.
            *
-           * Via the router, not `window.location`. A raw assignment of
-           * "/#universe" is not prefix-aware, so behind the reverse proxy it
-           * would leave the app entirely and land on the portfolio homepage.
-           * `router.push` applies `basePath`, giving "/protocol#universe".
+           * Via the router rather than `window.location`, so the transition
+           * stays client-side and Next can preserve the scroll position of the
+           * landing page instead of reloading it from scratch.
            */
           router.push("/#universe");
           break;
@@ -313,8 +312,8 @@ function SlideIntro({ protocol }: { protocol: ProtocolDefinition }) {
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-14">
       <div className="flex flex-col justify-center">
         <motion.div
-          initial={reduce ? false : { opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={reduce ? false : { y: 14 }}
+          animate={{ y: 0 }}
           transition={{ duration: 0.5 }}
         >
           <div className="flex flex-wrap items-center gap-2.5">
@@ -414,8 +413,8 @@ function SlideWhy({ protocol }: { protocol: ProtocolDefinition }) {
       <div className="mb-10 grid gap-8 lg:grid-cols-2 lg:gap-12">
         {/* The problem, stated then enumerated. */}
         <motion.div
-          initial={reduce ? false : { opacity: 0, x: -14 }}
-          animate={{ opacity: 1, x: 0 }}
+          initial={reduce ? false : { x: -14 }}
+          animate={{ x: 0 }}
           transition={{ duration: 0.5 }}
           className="rounded-xl border p-5 sm:p-6"
           style={{
@@ -445,8 +444,8 @@ function SlideWhy({ protocol }: { protocol: ProtocolDefinition }) {
             {protocol.problem.failures.map((failure, i) => (
               <motion.li
                 key={failure}
-                initial={reduce ? false : { opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
+                initial={reduce ? false : { x: -8 }}
+                animate={{ x: 0 }}
                 transition={{ delay: reduce ? 0 : 0.05 * i + 0.15, duration: 0.35 }}
                 className="flex items-start gap-2.5"
               >
@@ -465,8 +464,8 @@ function SlideWhy({ protocol }: { protocol: ProtocolDefinition }) {
 
         {/* The solution, as a headline plus a transition arrow. */}
         <motion.div
-          initial={reduce ? false : { opacity: 0, x: 14 }}
-          animate={{ opacity: 1, x: 0 }}
+          initial={reduce ? false : { x: 14 }}
+          animate={{ x: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
           className="flex flex-col justify-center rounded-xl border p-5 sm:p-6"
           style={{
@@ -679,8 +678,8 @@ function SlideHow({ protocol }: { protocol: ProtocolDefinition }) {
             {step ? (
               <motion.div
                 key={step.id}
-                initial={reduce ? false : { opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={reduce ? false : { y: 12 }}
+                animate={{ y: 0 }}
                 exit={reduce ? undefined : { opacity: 0, y: -8 }}
                 transition={{ duration: 0.26 }}
                 className="rounded-xl border p-5 sm:p-6"
@@ -792,8 +791,8 @@ function SlideRealWorld({ protocol }: { protocol: ProtocolDefinition }) {
         {example.hops.map((hop, i) => (
           <motion.li
             key={hop.label}
-            initial={reduce ? false : { opacity: 0, y: 14 }}
-            whileInView={{ opacity: 1, y: 0 }}
+            initial={reduce ? false : { y: 14 }}
+            whileInView={{ y: 0 }}
             viewport={{ once: true, margin: "-40px" }}
             transition={{ duration: 0.42, delay: reduce ? 0 : i * 0.07 }}
             className="flex min-w-0 flex-1 flex-col lg:flex-row lg:items-stretch"
@@ -923,8 +922,8 @@ function SlideRecap({
             {protocol.recap.points.map((point, i) => (
               <motion.li
                 key={point}
-                initial={reduce ? false : { opacity: 0, x: -10 }}
-                whileInView={{ opacity: 1, x: 0 }}
+                initial={reduce ? false : { x: -10 }}
+                whileInView={{ x: 0 }}
                 viewport={{ once: true, margin: "-30px" }}
                 transition={{ duration: 0.4, delay: reduce ? 0 : i * 0.06 }}
                 className="flex items-baseline gap-4 border-b border-line/60 py-3.5"

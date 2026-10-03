@@ -2,6 +2,8 @@
 
 import { motion, useReducedMotion } from "framer-motion";
 
+import { ENTER_REDUCED, enter } from "@/lib/motion";
+
 /**
  * Hero.
  *
@@ -27,9 +29,7 @@ export function Hero() {
       <div className="relative mx-auto max-w-[1400px] px-5 sm:px-8">
         {/* Eyebrow */}
         <motion.div
-          initial={reduce ? false : { opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
+          {...(reduce ? ENTER_REDUCED : enter(12, 0, 0.6))}
           className="mb-8 flex flex-wrap items-center gap-3"
         >
           <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1.5">
@@ -50,9 +50,7 @@ export function Hero() {
           {/* ------------------ headline column ------------------ */}
           <div>
             <motion.h1
-              initial={reduce ? false : { opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.75, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
+              {...(reduce ? ENTER_REDUCED : enter(20, 0.05, 0.75))}
               className="atlas-display text-[clamp(2.6rem,7.4vw,5.4rem)] font-medium text-ink"
             >
               How does data
@@ -91,9 +89,7 @@ export function Hero() {
             </motion.h1>
 
             <motion.p
-              initial={reduce ? false : { opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.16 }}
+              {...(reduce ? ENTER_REDUCED : enter(16, 0.16, 0.7))}
               className="mt-7 max-w-xl text-[15px] leading-relaxed text-ink-soft sm:text-base"
             >
               Explore the protocols, addressing systems, and communication
@@ -103,9 +99,7 @@ export function Hero() {
             </motion.p>
 
             <motion.div
-              initial={reduce ? false : { opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.24 }}
+              {...(reduce ? ENTER_REDUCED : enter(16, 0.24, 0.7))}
               className="mt-9 flex flex-wrap items-center gap-3"
             >
               <a
@@ -137,12 +131,7 @@ export function Hero() {
               </a>
             </motion.div>
 
-            <motion.dl
-              initial={reduce ? false : { opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.7, delay: 0.4 }}
-              className="mt-12 grid max-w-lg grid-cols-3 gap-px overflow-hidden rounded-lg border border-line bg-line"
-            >
+            <dl className="mt-12 grid max-w-lg grid-cols-3 gap-px overflow-hidden rounded-lg border border-line bg-line">
               {[
                 { k: "Protocols", v: "06" },
                 { k: "Slides each", v: "07" },
@@ -155,14 +144,12 @@ export function Hero() {
                   </dd>
                 </div>
               ))}
-            </motion.dl>
+            </dl>
           </div>
 
           {/* ------------------ the two flows ------------------ */}
           <motion.div
-            initial={reduce ? false : { opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.8, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            {...(reduce ? ENTER_REDUCED : enter(24, 0.3, 0.8))}
             className="flex flex-col gap-4"
           >
             <LayerFlow />

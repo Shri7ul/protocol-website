@@ -77,8 +77,8 @@ export function Foundations() {
           return (
             <motion.div
               key={group.id}
-              initial={reduce ? false : { opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
+              initial={reduce ? false : { y: 16 }}
+              whileInView={{ y: 0 }}
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.5, delay: reduce ? 0 : gi * 0.06 }}
             >
@@ -138,8 +138,14 @@ export function Foundations() {
 
                         {isOpen ? (
                           <motion.span
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
+                            /*
+                             * Height-only collapse. The opacity half of this
+                             * pair made an expanded definition invisible until
+                             * JS ran; `height: 0` already hides it, and it is
+                             * only mounted when `isOpen`.
+                             */
+                            initial={{ height: 0 }}
+                            animate={{ height: "auto" }}
                             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                             className="block overflow-hidden"
                           >

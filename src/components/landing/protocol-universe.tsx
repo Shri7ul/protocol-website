@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { ProtocolOrbit } from "@/components/landing/protocol-orbit";
 import { protocols } from "@/data/registry";
+import { RISE_REDUCED, rise } from "@/lib/motion";
 
 /**
  * Protocol Universe — the orbit plus a compact index beneath it.
@@ -36,10 +37,7 @@ export function ProtocolUniverse() {
           {protocols.map((p, i) => (
             <motion.li
               key={p.id}
-              initial={reduce ? false : { opacity: 0, y: 14 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-40px" }}
-              transition={{ duration: 0.45, delay: reduce ? 0 : i * 0.05 }}
+              {...(reduce ? RISE_REDUCED : rise(14, i * 0.05))}
             >
               <Link
                 href={`/${p.id}`}

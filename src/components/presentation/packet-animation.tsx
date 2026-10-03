@@ -135,8 +135,10 @@ export function PacketAnimation({
                 // direction, so the head and the label are flipped as needed.
                 flexDirection: forward ? "row" : "row-reverse",
               }}
-              initial={shouldAnimate ? { opacity: 0, scaleX: 0.35 } : false}
-              whileInView={{ opacity: 1, scaleX: 1 }}
+              /* Scale-only: the row labels must be legible in the served
+                 HTML, and a non-firing observer previously left them invisible. */
+              initial={shouldAnimate ? { scaleX: 0.35 } : false}
+              whileInView={{ scaleX: 1 }}
               viewport={{ once: true, margin: "-40px" }}
               transition={{
                 duration: 0.45,

@@ -371,7 +371,13 @@ function ProtocolNode({
       onMouseEnter={onHover}
       onFocus={onFocus}
       onBlur={onBlur}
-      initial={reduce ? false : { opacity: 0, scale: 0.82 }}
+      /*
+       * The node starts at its resting opacity rather than 0, so the six
+       * protocol names are legible in the prerendered HTML. `animate` still
+       * drives the dim/brighten states; only the entrance changed, and scale
+       * carries the arrival on its own.
+       */
+      initial={reduce ? false : { scale: 0.82 }}
       animate={{
         opacity: dimmed ? 0.34 : 1,
         scale: isActive ? 1.06 : 1,

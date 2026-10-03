@@ -3,8 +3,10 @@
 import { motion, useReducedMotion } from "framer-motion";
 import Link from "next/link";
 
+
 import { Label } from "@/components/ui/primitives";
 import { protocols } from "@/data/registry";
+import { RISE_REDUCED, SLIDE_REDUCED, rise, slideIn } from "@/lib/motion";
 
 /**
  * FinalRecap — "You now know how data moves."
@@ -43,12 +45,7 @@ export function FinalRecap() {
       />
 
       <div className="relative mx-auto max-w-[1400px] px-5 py-20 sm:px-8 sm:py-28">
-        <motion.div
-          initial={reduce ? false : { opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-80px" }}
-          transition={{ duration: 0.6 }}
-        >
+        <motion.div {...(reduce ? RISE_REDUCED : rise(20, 0))}>
           <div className="flex items-center gap-3">
             <span className="font-mono text-[11px] text-ink-mute">13</span>
             <span className="h-px w-6 bg-line-strong" />
@@ -64,10 +61,7 @@ export function FinalRecap() {
         <div className="mt-14 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-14">
           {/* The stack, top to bottom. */}
           <motion.div
-            initial={reduce ? false : { opacity: 0, x: -16 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.55, delay: 0.08 }}
+            {...(reduce ? SLIDE_REDUCED : slideIn(-16, 0.08))}
             className="atlas-panel rounded-xl p-5 sm:p-6"
           >
             <div className="mb-5 flex items-center justify-between">
@@ -119,10 +113,7 @@ export function FinalRecap() {
 
           {/* The embedded buses, side by side. */}
           <motion.div
-            initial={reduce ? false : { opacity: 0, x: 16 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true, margin: "-60px" }}
-            transition={{ duration: 0.55, delay: 0.16 }}
+            {...(reduce ? SLIDE_REDUCED : slideIn(16, 0.16))}
             className="atlas-panel rounded-xl p-5 sm:p-6"
           >
             <div className="mb-5 flex items-center justify-between">
@@ -202,10 +193,7 @@ export function FinalRecap() {
             {LEARNED.map((item, i) => (
               <motion.li
                 key={item}
-                initial={reduce ? false : { opacity: 0, y: 10 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-40px" }}
-                transition={{ duration: 0.4, delay: reduce ? 0 : i * 0.035 }}
+                {...(reduce ? RISE_REDUCED : rise(10, i * 0.035))}
                 className="flex items-baseline gap-3.5 border-b border-line/60 py-3.5"
               >
                 <span className="font-mono text-[11px] tabular-nums text-ink-faint">
@@ -221,10 +209,7 @@ export function FinalRecap() {
 
         {/* ------------------- the CTA ------------------- */}
         <motion.div
-          initial={reduce ? false : { opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: "-60px" }}
-          transition={{ duration: 0.5 }}
+          {...(reduce ? RISE_REDUCED : rise(16, 0))}
           className="mt-16 flex flex-col gap-6 border-t border-line pt-10 sm:flex-row sm:items-center sm:justify-between"
         >
           <div>

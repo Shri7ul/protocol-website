@@ -33,8 +33,8 @@ export function LayerDiagram() {
           return (
             <motion.div
               key={layer.id}
-              initial={reduce ? false : { opacity: 0, x: -18 }}
-              whileInView={{ opacity: 1, x: 0 }}
+              initial={reduce ? false : { x: -18 }}
+              whileInView={{ x: 0 }}
               viewport={{ once: true, margin: "-60px" }}
               transition={{ duration: 0.5, delay: reduce ? 0 : i * 0.07 }}
             >
@@ -102,8 +102,9 @@ export function LayerDiagram() {
 
                 {isOpen ? (
                   <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
+                    /* Height-only collapse - see the note in foundations.tsx. */
+                    initial={{ height: 0 }}
+                    animate={{ height: "auto" }}
                     transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
                     className="overflow-hidden"
                   >
@@ -178,7 +179,8 @@ export function LayerDiagram() {
             chain={["Controller", "SDA / SCL", "Sensor", "OLED"]}
             note="Two wires, one board, up to 112 addressed targets. Pin-efficient and slow."
             href="/i2c"
-          />          <EmbeddedPath
+          />
+          <EmbeddedPath
             title="CAN"
             accentHex="#e8674a"
             accentSoft="#e8674a1f"
