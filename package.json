@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:worker": "node cloudflare/test-worker.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

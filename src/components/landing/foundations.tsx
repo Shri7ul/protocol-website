@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { useState } from "react";
 
 import { LayerDiagram } from "@/components/landing/layer-diagram";
@@ -148,9 +149,9 @@ export function Foundations() {
                             {term.related && term.related.length > 0 ? (
                               <span className="mt-3 flex flex-wrap gap-1.5">
                                 {term.related.map((id) => (
-                                  <a
+                                  <Link
                                     key={id}
-                                    href={`/protocol/${id}`}
+                                    href={`/${id}`}
                                     className="rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors"
                                     style={{
                                       borderColor: `${ACCENTS[id].hex}45`,
@@ -158,7 +159,7 @@ export function Foundations() {
                                     }}
                                   >
                                     {id.toUpperCase()}
-                                  </a>
+                                  </Link>
                                 ))}
                               </span>
                             ) : null}

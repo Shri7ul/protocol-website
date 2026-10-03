@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { PROTOCOL_ORDER, protocols } from "@/data/registry";
+import { stripBasePath } from "@/lib/deployment";
 
 /**
  * The persistent top bar.
@@ -14,11 +15,21 @@ import { PROTOCOL_ORDER, protocols } from "@/data/registry";
  * the primary way to jump to a protocol without hunting through the orbit.
  */
 export function SiteHeader() {
-  const pathname = usePathname();
+  const rawPathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
 
-  const onProtocolPage = pathname?.startsWith("/protocol/");
+  /**
+   * `usePathname()` includes the deployment prefix, so on production it
+   * reports "/protocol/tcp" for a route that is "/tcp" in this app. Every
+   * comparison below is made against the normalised, app-relative form —
+   * otherwise the active-state highlighting silently stops matching once the
+   * app is mounted under a prefix.
+   */
+  const pathname = stripBasePath(rawPathname);
+
+  /** Only the six real protocol routes count — not the 404 page. */
+  const onProtocolPage = PROTOCOL_ORDER.some((id) => pathname === `/${id}`);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -86,11 +97,11 @@ export function SiteHeader() {
           {PROTOCOL_ORDER.map((id) => {
             const p = protocols.find((x) => x.id === id);
             if (!p) return null;
-            const active = pathname === `/protocol/${id}`;
+            const active = pathname === `/${id}`;
             return (
               <Link
                 key={id}
-                href={`/protocol/${id}`}
+                href={`/${id}`}
                 className="group relative rounded-md px-2.5 py-1.5 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors"
                 style={{ color: active ? p.accent.hex : "var(--color-ink-mute)" }}
                 aria-current={active ? "page" : undefined}
@@ -158,7 +169,7 @@ export function SiteHeader() {
             {protocols.map((p) => (
               <li key={p.id}>
                 <Link
-                  href={`/protocol/${p.id}`}
+                  href={`/${p.id}`}
                   className="flex items-center gap-3 border-b border-line/50 py-3 last:border-0"
                 >
                   <span

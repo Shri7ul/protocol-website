@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 
 import { protocols } from "@/data/registry";
@@ -25,6 +26,21 @@ const SIZE = 1000;
 const CENTER = SIZE / 2;
 const RADIUS = 356;
 const NODE = 154;
+
+/**
+ * A Next.js `<Link>` carrying Framer Motion props.
+ *
+ * The orbit nodes animate on hover, focus and mount, so they need motion
+ * props *and* real client-side navigation. A plain `<a href="/protocol/...">`
+ * would give us neither: it hard-codes the deployment's path prefix (which
+ * then gets applied a second time by `basePath`) and it forces a full page
+ * reload on every click.
+ *
+ * `motion.create()` is hoisted to module scope on purpose — calling it inside
+ * the component would build a new component type on every render and remount
+ * the whole subtree.
+ */
+const MotionLink = motion.create(Link);
 
 interface Placed {
   protocol: ProtocolDefinition;
@@ -350,8 +366,8 @@ function ProtocolNode({
   onBlur: () => void;
 }) {
   return (
-    <motion.a
-      href={`/protocol/${protocol.id}`}
+    <MotionLink
+      href={`/${protocol.id}`}
       onMouseEnter={onHover}
       onFocus={onFocus}
       onBlur={onBlur}
@@ -437,7 +453,7 @@ function ProtocolNode({
           {String(index + 1).padStart(2, "0")}
         </span>
       </span>
-    </motion.a>
+    </MotionLink>
   );
 }
 

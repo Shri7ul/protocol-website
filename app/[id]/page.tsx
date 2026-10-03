@@ -10,6 +10,22 @@ import { getProtocol, isProtocolId, PROTOCOL_ORDER } from "@/data/registry";
  * The content is static data — no fetching, no user-specific state — so there
  * is no reason to render these at request time. `generateStaticParams` plus
  * the absence of any dynamic API means these ship as prerendered HTML.
+ *
+ * The route segment is `[id]`, NOT `protocol/[id]`, and that is deliberate.
+ * This app is published under the public prefix `/protocol` via `basePath`, so
+ * the app-relative path must be `/tcp` for the browser to end up at
+ * `/protocol/tcp`. Naming the folder `protocol/` as well would produce
+ * `/protocol/protocol/tcp`.
+ *
+ * Result, with `basePath = "/protocol"`:
+ *
+ *   app-relative route   public URL
+ *   /                    https://shriful.tech/protocol
+ *   /tcp                 https://shriful.tech/protocol/tcp
+ *   /tcp (RSC payload)   https://shriful.tech/protocol/tcp?_rsc=...
+ *
+ * The Cloudflare Worker strips `/protocol` before forwarding, so the origin
+ * (Vercel) is asked for `/tcp` — matching the route segment exactly.
  */
 export function generateStaticParams() {
   return PROTOCOL_ORDER.map((id) => ({ id }));

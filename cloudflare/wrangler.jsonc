@@ -1,0 +1,66 @@
+/**
+ * Cloudflare Worker configuration — Protocol Atlas reverse proxy.
+ *
+ * Deploy from this directory:
+ *
+ *   npx wrangler deploy
+ *
+ * ─── What this Worker does ─────────────────────────────────────────────────
+ *
+ * Fronts `https://shriful.tech/protocol*` and proxies to the Vercel deployment
+ * of the Next.js app, stripping the `/protocol` prefix on the way through.
+ * Requests that do NOT start with the prefix are served by the Worker's own
+ * static assets, so the portfolio continues to work untouched.
+ *
+ * ─── `assets` ─────────────────────────────────────────────────────────────
+ *
+ * The `directory` is served for requests the Worker hands back. Point it at
+ * your portfolio build output. If your portfolio is already served from the
+ * same Worker via its own assets block, this is where that lives — the Worker
+ * only calls into it for non-`/protocol` paths.
+ *
+ * `binding: "ASSETS"` is what makes `env.ASSETS.fetch()` available in
+ * `worker.js`. Without it the fall-through branch throws.
+ *
+ * `run_worker_first: true` is REQUIRED here. By default Cloudflare serves a
+ * matching static asset before invoking the Worker; since this Worker is the
+ * router for `/protocol*`, it must run first or a stray file could shadow it.
+ *
+ * ─── Changing the prefix or origin ────────────────────────────────────────
+ *
+ * Edit `vars` below, not `worker.js`. `PROTOCOL_PREFIX` must stay in lockstep
+ * with `NEXT_PUBLIC_BASE_PATH` in the Next.js build — see
+ * `src/lib/deployment.ts` for the other half of that contract.
+ */
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  "name": "protocol-atlas-proxy",
+
+  // Pin the runtime behaviour. Bump deliberately, not incidentally.
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "main": "worker.js",
+
+  "vars": {
+    // Public prefix. MUST equal NEXT_PUBLIC_BASE_PATH used to build the app.
+    "PROTOCOL_PREFIX": "/protocol",
+
+    // Scheme + host serving the app, WITHOUT the prefix and without a
+    // trailing slash. Vercel exposes the app at its deployment root.
+    "PROTOCOL_ORIGIN": "https://website-protocol.vercel.app"
+  },
+
+  "assets": {
+    // Directory served for non-`/protocol` requests (the portfolio).
+    // Adjust to your portfolio build output — e.g. "./public" or "../out".
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

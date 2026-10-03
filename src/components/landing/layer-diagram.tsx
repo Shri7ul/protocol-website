@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { useState } from "react";
 
 import { ACCENTS } from "@/data/accents";
@@ -116,9 +117,9 @@ export function LayerDiagram() {
                       {layer.protocolIds.length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-2">
                           {layer.protocolIds.map((id) => (
-                            <a
+                            <Link
                               key={id}
-                              href={`/protocol/${id}`}
+                              href={`/${id}`}
                               className="rounded-md border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors"
                               style={{
                                 borderColor: `${ACCENTS[id as keyof typeof ACCENTS].hex}55`,
@@ -126,7 +127,7 @@ export function LayerDiagram() {
                               }}
                             >
                               Open {id.toUpperCase()} →
-                            </a>
+                            </Link>
                           ))}
                         </div>
                       ) : null}
@@ -176,15 +177,14 @@ export function LayerDiagram() {
             accentSoft="#4fc4dd1f"
             chain={["Controller", "SDA / SCL", "Sensor", "OLED"]}
             note="Two wires, one board, up to 112 addressed targets. Pin-efficient and slow."
-            href="/protocol/i2c"
-          />
-          <EmbeddedPath
+            href="/i2c"
+          />          <EmbeddedPath
             title="CAN"
             accentHex="#e8674a"
             accentSoft="#e8674a1f"
             chain={["Controller", "CAN_H / CAN_L", "Motor", "Battery"]}
             note="Two differential wires, metres of cable, every node equal. Built for noise and for determinism."
-            href="/protocol/can"
+            href="/can"
           />
         </div>
 
@@ -220,7 +220,7 @@ function EmbeddedPath({
   href: string;
 }) {
   return (
-    <a
+    <Link
       href={href}
       className="group relative block overflow-hidden rounded-xl p-4 transition-colors duration-300"
       style={{
@@ -263,6 +263,6 @@ function EmbeddedPath({
       </div>
 
       <p className="mt-3 text-[12.5px] leading-relaxed text-ink-mute">{note}</p>
-    </a>
+    </Link>
   );
 }

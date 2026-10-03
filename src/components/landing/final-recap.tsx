@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 
 import { Label } from "@/components/ui/primitives";
 import { protocols } from "@/data/registry";
@@ -263,9 +264,9 @@ export function FinalRecap() {
         {/* Quick links to all six, in accent order. */}
         <div className="mt-10 flex flex-wrap gap-2">
           {protocols.map((p) => (
-            <a
+            <Link
               key={p.id}
-              href={`/protocol/${p.id}`}
+              href={`/${p.id}`}
               className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.12em] transition-colors"
               style={{
                 borderColor: `${p.accent.hex}40`,
@@ -277,7 +278,7 @@ export function FinalRecap() {
                 style={{ backgroundColor: p.accent.hex }}
               />
               {p.name}
-            </a>
+            </Link>
           ))}
         </div>
       </div>

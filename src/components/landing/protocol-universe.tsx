@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 
 import { ProtocolOrbit } from "@/components/landing/protocol-orbit";
 import { protocols } from "@/data/registry";
@@ -40,8 +41,8 @@ export function ProtocolUniverse() {
               viewport={{ once: true, margin: "-40px" }}
               transition={{ duration: 0.45, delay: reduce ? 0 : i * 0.05 }}
             >
-              <a
-                href={`/protocol/${p.id}`}
+              <Link
+                href={`/${p.id}`}
                 className="group relative flex h-full flex-col overflow-hidden rounded-xl p-4 transition-all duration-300 hover:-translate-y-0.5"
                 style={{
                   backgroundColor: "oklch(0.178 0.010 265 / 0.55)",
@@ -91,7 +92,7 @@ export function ProtocolUniverse() {
                     Open →
                   </span>
                 </div>
-              </a>
+              </Link>
             </motion.li>
           ))}
         </ul>

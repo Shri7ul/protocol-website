@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ComparisonTable } from "@/components/presentation/comparison-table";
@@ -44,6 +45,7 @@ export function ProtocolPresentation({ protocol }: { protocol: ProtocolDefinitio
   const [slide, setSlide] = useState(0);
   const [direction, setDirection] = useState(1);
   const reduce = useReducedMotion();
+  const router = useRouter();
   const stageRef = useRef<HTMLDivElement>(null);
 
   const total = SLIDE_TITLES.length;
@@ -106,8 +108,15 @@ export function ProtocolPresentation({ protocol }: { protocol: ProtocolDefinitio
           go(total - 1);
           break;
         case "Escape":
-          // Escape returns to the overview, per the brief.
-          window.location.href = "/#universe";
+          /*
+           * Escape returns to the overview, per the brief.
+           *
+           * Via the router, not `window.location`. A raw assignment of
+           * "/#universe" is not prefix-aware, so behind the reverse proxy it
+           * would leave the app entirely and land on the portfolio homepage.
+           * `router.push` applies `basePath`, giving "/protocol#universe".
+           */
+          router.push("/#universe");
           break;
         default:
           break;
@@ -116,7 +125,7 @@ export function ProtocolPresentation({ protocol }: { protocol: ProtocolDefinitio
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, slide, total]);
+  }, [go, router, slide, total]);
 
   /* Warn-free alternative to mutating history: keep the document title in
      sync with the slide so the browser tab reflects progress. */
@@ -982,7 +991,7 @@ function SlideRecap({
                 .map((o) => (
                   <li key={o.id}>
                     <Link
-                      href={`/protocol/${o.id}`}
+                      href={`/${o.id}`}
                       className="group flex items-center gap-3 rounded-lg border border-line bg-surface/40 px-3.5 py-3 transition-colors hover:border-line-strong"
                     >
                       <span
