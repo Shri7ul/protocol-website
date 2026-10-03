@@ -74,16 +74,18 @@ The rule is total — everything under `/protocol` is forwarded with the prefix
 removed. There is no per-asset special-casing, because a single prefix strip
 covers every case.
 
-### Paths the Worker must NOT touch
+### Paths the Worker should not handle
 
 | Incoming request | Handling |
 |---|---|
-| `GET /` | portfolio |
-| `GET /about`, `/projects`, … | portfolio |
+| `GET /` | portfolio — normally never routed to this Worker |
+| `GET /about`, `/projects`, … | portfolio — normally never routed to this Worker |
 | `GET /_next/static/...` (no prefix) | portfolio's own assets |
 
-Anything outside `/protocol` must fall through to the portfolio. If the Worker
-claimed bare `/_next/*` it would collide with the portfolio's own bundles.
+In production these never reach the Worker: the route is `/protocol*` only. The
+Worker still handles them safely if invoked directly — see
+*Requests outside `/protocol`* below. It must never claim bare `/_next/*`, or it
+would collide with the portfolio's own bundles.
 
 ### The browser only ever requests prefixed URLs
 
@@ -124,6 +126,48 @@ The origin path is never prefixed. If the Worker sees a path that *still*
 contains `/protocol` after stripping, the app was built without `basePath`; the
 Worker returns a 500 with a diagnostic rather than silently 404ing.
 
+### Requests outside `/protocol` — who serves them?
+
+**In production: not this Worker.** The Worker is routed to
+`shriful.tech/protocol*` only, so a portfolio request is never delivered to it.
+That is the design, not an omission — this Worker is a pure reverse proxy and
+never serves the portfolio itself.
+
+That distinction matters because the Worker can also be reached at its
+**preview URL**, `https://protocol.smislam5959.workers.dev/`, which receives
+*every* path. A bare visit there is outside the prefix, so the Worker has to
+decide what to do. It resolves in this order:
+
+| Condition | Behaviour |
+|---|---|
+| `env.ASSETS` binding exists | serve the bundled portfolio from the edge |
+| `PORTFOLIO_ORIGIN` is set | reverse-proxy to that origin |
+| neither | return an explanatory page (200, `no-store`) |
+
+The third case is a real, correct state. It never throws and never loops.
+
+#### The bug this replaced
+
+An earlier revision declared `assets.binding: "ASSETS"` in `wrangler.jsonc`
+while `worker.js` called `env.ASSETS.fetch(request)` unconditionally. The
+production Worker has no such binding, so any non-prefixed request raised:
+
+```
+TypeError: Cannot read properties of undefined (reading 'fetch')
+```
+
+Two rules follow, and both are now enforced by tests:
+
+1. **Never assume a binding exists.** Check it:
+   `if (env.ASSETS && typeof env.ASSETS.fetch === "function")`.
+2. **Never use `fetch(request)` as a fallback.** It re-issues the request to the
+   same URL; on workers.dev that is the same Worker, so it re-enters `fetch`
+   until the runtime kills it. All fallbacks now construct an explicit target
+   URL.
+
+`wrangler.jsonc` no longer declares an `assets` block, because this Worker does
+not serve static assets. Config and code now agree.
+
 ---
 
 ## 3. Setup
@@ -163,10 +207,11 @@ Config lives in `cloudflare/wrangler.jsonc`:
 
 - `PROTOCOL_PREFIX` — must equal the build's `NEXT_PUBLIC_BASE_PATH`.
 - `PROTOCOL_ORIGIN` — the Vercel deployment, **without** the prefix.
-- `assets.run_worker_first: true` — required, so the Worker routes
-  `/protocol*` before any static asset can shadow it.
-- `assets.directory` — where the portfolio's files live for non-`/protocol`
-  requests. Point it at your portfolio output.
+- `PORTFOLIO_ORIGIN` — **leave unset in production.** It is only needed if you
+  want the workers.dev preview URL to proxy non-`/protocol` paths. There is no
+  default, deliberately: a guessed portfolio origin would silently send a
+  visitor somewhere you never configured.
+- **No `assets` block.** This Worker serves nothing itself.
 
 ### Point the domain at it
 
@@ -175,43 +220,132 @@ pattern keep being served by whatever already handles the apex.
 
 ---
 
-## 4. Tested behaviour
+## 4. Testing the deployed Worker
 
-`cloudflare/test-worker.mjs` runs the Worker in plain Node against a stub
-origin. No network, no credentials.
+### 4a. Test through the real domain, not the preview root
+
+This is the important one. The preview URL and the production URL exercise
+**different code paths**, so a passing preview root proves very little.
+
+| URL | What it reaches |
+|---|---|
+| `https://protocol.smislam5959.workers.dev/protocol/tcp` | reverse-proxy branch |
+| `https://protocol.smislam5959.workers.dev/` | non-prefix branch (preview only) |
+| `https://shriful.tech/protocol/tcp` | reverse-proxy branch — **this is production** |
+
+The bare preview root hits the non-prefix branch. That branch is *never
+reachable* on `shriful.tech`, because the route only sends `/protocol*` to the
+Worker. So:
+
+- **Do not** treat `https://…workers.dev/` working as evidence production works.
+- **Do** test every path you care about under the prefix, on both origins.
+
+#### The checks that matter
+
+Run these against the real domain. `-I` sends `HEAD`, so you get status and
+headers without a body; drop it to inspect HTML.
 
 ```bash
-npm run test:worker
+# 1. The app root — expect 200 and the Protocol Atlas HTML.
+curl -sI https://shriful.tech/protocol | head -5
+
+# 2. Every protocol page — expect 200 each, not 404.
+for p in tcp udp http https i2c can; do
+  printf '%-6s %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' https://shriful.tech/protocol/$p)"
+done
+
+# 3. Assets — must NOT be the portfolio's. Expect 200 + a JS content type.
+curl -sI "$(curl -s https://shriful.tech/protocol \
+  | grep -o '/protocol/_next/static/[^"]*\.js' | head -1 \
+  | sed 's|^|https://shriful.tech|')" | head -5
 ```
 
-16 assertions, all passing:
+#### The checks that catch the real failure modes
 
-| # | Assertion |
+```bash
+# 4. The prefix must NOT be doubled in any served URL.
+curl -s https://shriful.tech/protocol | grep -c '/protocol/protocol'
+
+# 5. Assets must not resolve to your portfolio's namespace.
+#    A non-zero count means basePath was lost in the build.
+curl -s https://shriful.tech/protocol | grep -c 'href="/_next/'
+
+# 6. The Vercel hostname must never appear in a response.
+curl -sI https://shriful.tech/protocol | grep -i 'vercel'
+
+# 7. Redirects must stay on the public host.
+curl -sI https://shriful.tech/protocol/tcp | grep -i '^location'
+```
+
+Expected: `0`, `0`, no output, and either no `Location` or one beginning
+`https://shriful.tech/protocol`.
+
+#### Then check it in a browser, not just with curl
+
+`curl` proves the server half. These three only fail in a browser:
+
+1. **Reload works.** Open `https://shriful.tech/protocol/tcp` directly (paste
+   the URL, do not navigate to it) and press `Ctrl+Shift+R`. A 404 here means
+   the Worker strip or the build's `basePath` is wrong.
+2. **Client-side navigation keeps the prefix.** From `/protocol`, click through
+   to TCP, then UDP. The address bar must read `/protocol/udp` — never
+   `/udp`.
+3. **Assets actually load.** Open DevTools → Network, reload, filter by JS. Every
+   request must be `/protocol/_next/...`. Any request to `/_next/...` at the
+   apex is being served by your portfolio and the page will break subtly.
+
+#### If the preview URL must not error
+
+With no `PORTFOLIO_ORIGIN` set, `https://protocol.smislam5959.workers.dev/`
+returns a **200** explanatory page rather than a `TypeError`. That is the
+desired outcome for a preview origin. If you would rather it proxy your
+portfolio, set `PORTFOLIO_ORIGIN` and redeploy.
+
+### 4b. The local suites
+
+Both run the Worker in plain Node against stub origins. No network, no
+credentials, no Cloudflare account.
+
+```bash
+npm run test:worker      # 26 behavioural assertions
+npm run test:contract    # 9 production routing rows
+```
+
+`test-contract.mjs` transcribes the deployment requirement row by row, so the
+contract cannot drift silently:
+
+```
+/protocol                  -> /
+/protocol/tcp              -> /tcp
+/protocol/udp              -> /udp
+/protocol/http             -> /http
+/protocol/https            -> /https
+/protocol/i2c              -> /i2c
+/protocol/can              -> /can
+/protocol/_next/static/... -> /_next/static/...
+```
+
+`test-worker.mjs` covers the behavioural surface, including the regression that
+caused the reported `TypeError`:
+
+| Group | Assertions |
 |---|---|
-| 1 | `GET /protocol` → origin `/` |
-| 2 | `GET /protocol/` → origin `/` |
-| 3 | `GET /protocol/tcp` → origin `/tcp` |
-| 4 | `GET /protocol/_next/...` → origin `/_next/...` |
-| 5 | immutable caching on `/_next/static/` |
-| 6 | query string preserved (`?_rsc=`) |
-| 7 | `Host` header set to the origin's own host |
-| 8 | non-`/protocol` served locally, origin never hit |
-| 9 | `307 Location` → public host **and** prefix |
-| 10 | origin-absolute `308 Location` → public host, origin hidden |
-| 11 | external `302 Location` passed through untouched |
-| 12 | origin 404 passes through as 404 |
-| 13 | doubled prefix → 500 diagnostic |
-| 14 | HTML/RSC `cache-control: must-revalidate` |
-| 15 | origin identity headers (`x-vercel-id`, `server`) scrubbed |
-| 16 | `PROTOCOL_PREFIX=/` disables the prefix cleanly |
+| prefix stripping | `/protocol`, `/protocol/`, `/protocol/tcp`, `/protocol/_next/...` |
+| caching | `immutable` on `/_next/static/`, `must-revalidate` on HTML |
+| headers | `Host` rewrite, origin identity scrubbed |
+| redirects | site-absolute, origin-absolute, external |
+| errors | origin 404 passthrough, doubled prefix → 500 diagnostic |
+| **no `ASSETS` binding** | `/about` does not throw; falls back to `PORTFOLIO_ORIGIN` |
+| **preview URL** | `/` does not throw, is not a recursion loop, names the working URLs |
+| **preview + prefix** | `/protocol/tcp` still reverse-proxies correctly |
+| config | `PROTOCOL_PREFIX=/` disables the prefix |
 
-> **What is and is not verified.** The Worker's routing logic, header handling
-> and rewrite behaviour are verified by the suite above, and the Next.js build
-> output is verified against the contract in §2. What has *not* been exercised
-> is a live request from Cloudflare's edge through to the real Vercel
-> deployment — that requires the domain route to be attached. Treat the edge leg
-> as unverified until one real request through `shriful.tech/protocol` is
-> observed.
+> **What is and is not verified.** The Worker's routing, header handling,
+> rewrite behaviour and binding-absence handling are verified by the suites
+> above; the Next.js build output is verified against §2. What has **not** been
+> exercised is a live request from Cloudflare's edge to the real Vercel
+> deployment — that needs the domain route attached. Do not call the deployment
+> verified until you have run the §4a checks and seen them pass.
 
 ---
 
@@ -235,6 +369,7 @@ It also deletes `cf-*` headers before forwarding, and strips `x-vercel-id`,
 | `next.config.ts` | resolves `basePath` from `NEXT_PUBLIC_BASE_PATH` |
 | `src/lib/deployment.ts` | `BASE_PATH`, `SITE_ORIGIN`, `SITE_URL`, `stripBasePath()` |
 | `cloudflare/worker.js` | the reverse proxy |
-| `cloudflare/wrangler.jsonc` | Worker config (`vars`, `assets`) |
-| `cloudflare/test-worker.mjs` | behavioural test suite |
+| `cloudflare/wrangler.jsonc` | Worker config (`vars` only — no `assets`) |
+| `cloudflare/test-worker.mjs` | behavioural suite, 26 assertions |
+| `cloudflare/test-contract.mjs` | production routing table, 9 rows |
 | `app/[id]/page.tsx` | protocol route — app-relative `/tcp`, not `/protocol/tcp` |

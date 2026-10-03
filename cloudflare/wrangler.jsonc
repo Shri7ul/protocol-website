@@ -9,22 +9,26 @@
  *
  * Fronts `https://shriful.tech/protocol*` and proxies to the Vercel deployment
  * of the Next.js app, stripping the `/protocol` prefix on the way through.
- * Requests that do NOT start with the prefix are served by the Worker's own
- * static assets, so the portfolio continues to work untouched.
  *
- * ─── `assets` ─────────────────────────────────────────────────────────────
+ * It is a PURE REVERSE PROXY, routed to `/protocol*` only. Requests outside
+ * that prefix are not delivered to it in production, so the portfolio is
+ * untouched by construction — this Worker never serves it.
  *
- * The `directory` is served for requests the Worker hands back. Point it at
- * your portfolio build output. If your portfolio is already served from the
- * same Worker via its own assets block, this is where that lives — the Worker
- * only calls into it for non-`/protocol` paths.
+ * ─── Why there is no `assets` block ────────────────────────────────────────
  *
- * `binding: "ASSETS"` is what makes `env.ASSETS.fetch()` available in
- * `worker.js`. Without it the fall-through branch throws.
+ * An earlier revision declared `assets.binding: "ASSETS"` while the code
+ * assumed the binding existed. The production Worker has no such binding, so a
+ * request outside the prefix raised:
  *
- * `run_worker_first: true` is REQUIRED here. By default Cloudflare serves a
- * matching static asset before invoking the Worker; since this Worker is the
- * router for `/protocol*`, it must run first or a stray file could shadow it.
+ *   TypeError: Cannot read properties of undefined (reading 'fetch')
+ *
+ * and the workers.dev preview URL — which receives every path, including `/` —
+ * hit it on a bare visit.
+ *
+ * `worker.js` now handles non-`/protocol` requests without assuming any
+ * binding: an `ASSETS` binding if present, else `PORTFOLIO_ORIGIN`, else an
+ * explanatory page. Declaring nothing here is the honest description of what
+ * this Worker is.
  *
  * ─── Changing the prefix or origin ────────────────────────────────────────
  *
@@ -50,15 +54,29 @@
     // Scheme + host serving the app, WITHOUT the prefix and without a
     // trailing slash. Vercel exposes the app at its deployment root.
     "PROTOCOL_ORIGIN": "https://website-protocol.vercel.app"
+
+    // PORTFOLIO_ORIGIN is intentionally NOT set.
+    //
+    // This Worker is routed only to `shriful.tech/protocol*`, so requests
+    // outside the prefix never reach it in production. Leaving this unset is
+    // the correct production state, not an omission.
+    //
+    // Set it only if you also want the workers.dev preview URL (or another
+    // route) to proxy non-`/protocol` paths somewhere:
+    //
+    //   "PORTFOLIO_ORIGIN": "https://shriful.tech"
   },
 
-  "assets": {
-    // Directory served for non-`/protocol` requests (the portfolio).
-    // Adjust to your portfolio build output — e.g. "./public" or "../out".
-    "directory": "./public",
-    "binding": "ASSETS",
-    "run_worker_first": true
-  },
+  // No `assets` block.
+  //
+  // This Worker serves nothing itself — it is a pure reverse proxy for
+  // `/protocol*`. Declaring a binding it does not need is what produced the
+  // `TypeError: Cannot read properties of undefined (reading 'fetch')` on the
+  // preview URL: the code assumed `env.ASSETS` existed because the config
+  // implied it would.
+  //
+  // `worker.js` now treats every non-`/protocol` request without assuming any
+  // binding, so this config and the code agree.
 
   "observability": {
     "enabled": true

@@ -48,15 +48,26 @@
  *
  * These are read from the Worker's environment so the same script can front a
  * preview origin, a staging prefix, or production without an edit. Values are
- * declared in `wrangler.jsonc` under `vars` — see that file for the defaults
- * this app ships with.
+ * declared in `wrangler.jsonc` under `vars`.
  *
- *   PROTOCOL_PREFIX  Public path prefix. Must equal `basePath` in the Next.js
- *                    build (`NEXT_PUBLIC_BASE_PATH`). "/protocol" by default.
+ *   PROTOCOL_PREFIX   Public path prefix. Must equal `basePath` in the Next.js
+ *                     build (`NEXT_PUBLIC_BASE_PATH`). "/protocol" by default.
  *
- *   PROTOCOL_ORIGIN  Scheme + host of the deployment that serves the app. Must
- *                    be absolute and must NOT carry the prefix — the prefix is
- *                    applied by this Worker, not by the origin.
+ *   PROTOCOL_ORIGIN   Scheme + host of the deployment that serves the app. Must
+ *                     be absolute and must NOT carry the prefix — the prefix is
+ *                     applied by this Worker, not by the origin.
+ *
+ *   PORTFOLIO_ORIGIN  Optional. Scheme + host of the portfolio, used for
+ *                     requests OUTSIDE the prefix.
+ *
+ *                     In production this is normally UNSET, because the Worker
+ *                     is routed only to `shriful.tech/protocol*` and so never
+ *                     receives a portfolio request at all. It exists for the
+ *                     workers.dev preview URL, which receives every path.
+ *
+ *                     There is deliberately no default: guessing a portfolio
+ *                     origin would silently proxy a visitor to a host the
+ *                     operator never configured.
  */
 const DEFAULT_PREFIX = "/protocol";
 const DEFAULT_ORIGIN = "https://website-protocol.vercel.app";
@@ -88,13 +99,26 @@ function resolveOrigin(raw) {
   return raw.trim().replace(/\/+$/, "");
 }
 
+/**
+ * Optional origin: `null` when unset, so callers must decide what to do rather
+ * than receiving a plausible-looking default.
+ *
+ * @param {string | undefined} raw
+ * @returns {string | null}
+ */
+function resolveOptionalOrigin(raw) {
+  if (raw === undefined || raw === null || raw.trim() === "") return null;
+  return raw.trim().replace(/\/+$/, "");
+}
+
 const worker = {
   /**
    * @param {Request} request
    * @param {{
-   *   ASSETS: { fetch: (r: Request) => Promise<Response> },
+   *   ASSETS?: { fetch: (r: Request) => Promise<Response> },
    *   PROTOCOL_PREFIX?: string,
    *   PROTOCOL_ORIGIN?: string,
+   *   PORTFOLIO_ORIGIN?: string,
    * }} env
    */
   async fetch(request, env) {
@@ -103,13 +127,14 @@ const worker = {
     const url = new URL(request.url);
     const { pathname, search } = url;
 
-    // ---- Not ours: let Cloudflare fall through to the portfolio -------------
+    // ---- Not ours: hand off to the portfolio ---------------------------------
     //
-    // Returning `env.ASSETS.fetch(request)` serves the Worker's own static
-    // assets (the portfolio build, if this Worker is bound to it). Swap this
-    // for `fetch(request)` if the portfolio lives on a different origin.
+    // Delegated to `servePortfolio()` so that no binding is assumed to exist.
+    // In production the Worker is routed only to `shriful.tech/protocol*`, so
+    // this branch is normally unreachable there — it matters for the
+    // workers.dev preview URL, which receives every path.
     if (pathname !== PREFIX && !pathname.startsWith(`${PREFIX}/`)) {
-      return env.ASSETS.fetch(request);
+      return servePortfolio(request, env);
     }
 
     // ---- Strip the prefix ---------------------------------------------------
@@ -301,4 +326,151 @@ function toPublicLocation(location, originUrl, publicUrl, prefix) {
   rewritten.search = suffix ? suffix : "";
   rewritten.hash = "";
   return rewritten.toString();
+}
+
+/**
+ * Handle a request that is NOT under the protocol prefix.
+ *
+ * ─── Why this is not just `env.ASSETS.fetch(request)` ────────────────────────
+ *
+ * The production Worker is attached to `shriful.tech/protocol*` only. On that
+ * deployment there is no static-assets binding, so `env.ASSETS` is `undefined`
+ * and touching `.fetch` raises:
+ *
+ *   TypeError: Cannot read properties of undefined (reading 'fetch')
+ *
+ * The preview URL (`https://<name>.<subdomain>.workers.dev/`) is different: it
+ * receives EVERY path, including `/`, so a bare preview visit would hit that
+ * same dead branch.
+ *
+ * ─── Why not `fetch(request)` ────────────────────────────────────────────────
+ *
+ * `fetch(request)` re-issues the request to the same URL. On workers.dev that
+ * is the same Worker, so the request comes straight back and loops until the
+ * runtime kills it. Never do this as a fallback.
+ *
+ * ─── The three cases ─────────────────────────────────────────────────────────
+ *
+ *   1. ASSETS bound          -> serve the bundled portfolio from the edge.
+ *   2. PORTFOLIO_ORIGIN set  -> reverse-proxy to that origin.
+ *   3. neither               -> return an explanatory page. Never throw, never
+ *                               loop.
+ *
+ * Case 3 is a real state, not a failure: in production the route means this
+ * branch is simply not reached. The page says so, so an operator opening the
+ * preview URL understands why it is not the portfolio.
+ *
+ * @param {Request} request
+ * @param {{ ASSETS?: { fetch: (r: Request) => Promise<Response> }, PORTFOLIO_ORIGIN?: string }} env
+ */
+async function servePortfolio(request, env) {
+  // 1 — A static-assets binding, when one is configured.
+  if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
+    return env.ASSETS.fetch(request);
+  }
+
+  // 2 — An explicitly configured portfolio origin.
+  const portfolioOrigin = resolveOptionalOrigin(env.PORTFOLIO_ORIGIN);
+  if (portfolioOrigin) {
+    const url = new URL(request.url);
+    const target = new URL(
+      url.pathname + url.search,
+      `${portfolioOrigin}/`,
+    );
+
+    const headers = new Headers(request.headers);
+    headers.set("host", new URL(portfolioOrigin).host);
+    headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+    headers.set("x-forwarded-host", url.host);
+    const clientIp = request.headers.get("cf-connecting-ip");
+    if (clientIp) headers.set("x-forwarded-for", clientIp);
+
+    /** @type {RequestInit} */
+    const init = { method: request.method, headers, redirect: "manual" };
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      init.body = request.body;
+      init.duplex = "half";
+    }
+
+    let upstream;
+    try {
+      upstream = await fetch(target.toString(), init);
+    } catch (cause) {
+      return textResponse(
+        502,
+        [
+          "502 Bad Gateway: could not reach the portfolio origin.",
+          "",
+          `  path  : ${url.pathname}`,
+          `  error : ${cause instanceof Error ? cause.message : String(cause)}`,
+        ].join("\n"),
+      );
+    }
+
+    // Redirects must stay on the public host, exactly as for the app origin.
+    const responseHeaders = new Headers(upstream.headers);
+    const location = responseHeaders.get("location");
+    if (location) {
+      responseHeaders.set("location", toPublicLocation(location, target, url, ""));
+    }
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
+  }
+
+  // 3 — Nothing configured. Explain, do not throw, do not recurse.
+  //
+  // The protocol paths are listed so a person opening the preview URL
+  // immediately sees the address that does work.
+  return new Response(
+    [
+      "Protocol Atlas — Cloudflare Worker preview",
+      "",
+      "This URL is the Worker's own preview origin, not the portfolio.",
+      "",
+      "The production deployment for this Worker is routed to:",
+      "",
+      "    https://shriful.tech/protocol*",
+      "",
+      "so requests outside /protocol never reach it. This page is what the",
+      "Worker returns when it is invoked directly and has no portfolio to",
+      "hand the request to.",
+      "",
+      "The application is served at:",
+      "",
+      `    https://shriful.tech/protocol`,
+      `    https://shriful.tech/protocol/tcp`,
+      "",
+      "On this preview origin you can also try:",
+      "",
+      `    /protocol`,
+      `    /protocol/tcp`,
+      "",
+      "To make this Worker serve the portfolio too, bind static assets",
+      "(`assets.binding`) or set PORTFOLIO_ORIGIN.",
+    ].join("\n"),
+    {
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+        // Marker so tests can assert this branch was taken rather than a loop.
+        "x-protocol-atlas-fallback": "no-portfolio-origin",
+      },
+    },
+  );
+}
+
+/**
+ * @param {number} status
+ * @param {string} message
+ */
+function textResponse(status, message) {
+  return new Response(message, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }

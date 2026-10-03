@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc --noEmit",
-    "test:worker": "node cloudflare/test-worker.mjs"
+    "test:worker": "node cloudflare/test-worker.mjs",
+    "test:contract": "node cloudflare/test-contract.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
