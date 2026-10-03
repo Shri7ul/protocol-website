@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test:worker": "node cloudflare/test-worker.mjs",
     "test:contract": "node cloudflare/test-contract.mjs",
-    "test:live": "node cloudflare/test-live-origin.mjs"
+    "test:live": "node cloudflare/test-live-origin.mjs",
+    "test:public": "node cloudflare/test-public-route.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
